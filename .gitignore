@@ -1,0 +1,15 @@
+# Wiki generated cache pages
+wiki/*.html
+wiki/**/*.html
+
+# VS Code
+.vscode/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment files
+.env

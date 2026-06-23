@@ -38,13 +38,147 @@
         h1 { font-size: 1.3rem; margin-bottom: 0.5rem; }
         p { font-size: 1rem; line-height: 1.65; color: var(--muted); }
         .hint { margin-top: 0.75rem; font-size: 0.9rem; }
+        .target { margin-top: 0.35rem; font-size: 0.95rem; color: var(--text); }
+        .slogan {
+            margin-top: 0.15rem;
+            font-size: 1.02rem;
+            color: #1f3f7a;
+            font-weight: 600;
+            min-height: 1.6em;
+        }
+        .progress-shell {
+            width: 100%;
+            height: 14px;
+            margin-top: 1rem;
+            border-radius: 999px;
+            background: #e7ebf2;
+            overflow: hidden;
+            border: 1px solid rgba(162, 169, 177, 0.7);
+        }
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #7aa7ff 0%, var(--accent) 100%);
+            transition: width 220ms ease;
+        }
+        .progress-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-top: 0.75rem;
+            font-size: 0.92rem;
+            color: var(--muted);
+        }
+        .status-stage {
+            color: var(--text);
+            font-weight: 600;
+        }
+        .error {
+            margin-top: 1rem;
+            padding: 0.85rem 1rem;
+            border-radius: 10px;
+            background: #fff4f4;
+            border: 1px solid #e6bcbc;
+            color: #8a1f1f;
+            display: none;
+        }
     </style>
-    <meta http-equiv="refresh" content="0.25;url={{ next_url }}">
     <script>
         window.addEventListener('DOMContentLoaded', function () {
-            setTimeout(function () {
-                window.location.replace('{{ next_url }}');
-            }, 250);
+            const jobId = '{{ job_id }}';
+            const statusUrl = `/api/jobs/${jobId}`;
+            const resultUrl = '{{ result_url }}';
+            const slogans = [
+                '正在连接大英图书馆网络系统',
+                '临近宇宙连接器启动中',
+                '正在同步跨维度目录索引',
+                '正在检索平行世界资料库',
+                '正在校准百科条目坐标',
+                '正在加载多源档案缓存',
+                '正在接入外层知识节点',
+                '正在协调宇宙边界的检索请求',
+                '正在呼叫星图目录主机',
+                '正在穿过档案层与现实层的缓冲区',
+                '正在对接第七码头的知识通道',
+                '正在整编无名城市的旧档案',
+                '正在等待远端索引表回传',
+                '正在校验条目标题的星际映射',
+                '正在拆分与重组百科碎片',
+                '正在装载古旧索引与新生条目',
+                '正在接收来自边界站的同步包',
+                '正在排队进入主档案层'
+            ];
+            const progressBar = document.querySelector('.progress-bar');
+            const progressValue = document.getElementById('progress-value');
+            const stageValue = document.getElementById('stage-value');
+            const messageValue = document.getElementById('message-value');
+            const errorBox = document.getElementById('error-box');
+            const sloganValue = document.getElementById('slogan-value');
+            let sloganIndex = Math.floor(Math.random() * slogans.length);
+            let sloganTimer = null;
+
+            function setProgress(percent) {
+                const clamped = Math.max(0, Math.min(100, Number(percent) || 0));
+                progressBar.style.width = `${clamped}%`;
+                progressValue.textContent = `${clamped}%`;
+            }
+
+            function rotateSlogan() {
+                sloganValue.textContent = slogans[sloganIndex % slogans.length];
+                sloganIndex += 1;
+            }
+
+            function startSloganRotation() {
+                rotateSlogan();
+                sloganTimer = window.setInterval(rotateSlogan, 1800);
+            }
+
+            function stopSloganRotation() {
+                if (sloganTimer) {
+                    window.clearInterval(sloganTimer);
+                    sloganTimer = null;
+                }
+            }
+
+            async function pollStatus() {
+                try {
+                    const response = await fetch(statusUrl, { cache: 'no-store' });
+                    if (!response.ok) {
+                        throw new Error(`状态请求失败：${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    setProgress(data.progress);
+                    stageValue.textContent = data.stage || '处理中';
+                    messageValue.textContent = data.message || '正在处理中';
+
+                    if (data.state === 'done') {
+                        stopSloganRotation();
+                        setProgress(100);
+                        stageValue.textContent = '生成完成';
+                        messageValue.textContent = '页面已准备好，正在打开结果。';
+                        window.location.replace(resultUrl);
+                        return;
+                    }
+
+                    if (data.state === 'error') {
+                        stopSloganRotation();
+                        errorBox.style.display = 'block';
+                        errorBox.textContent = data.error || data.message || '生成失败';
+                        return;
+                    }
+
+                    window.setTimeout(pollStatus, 700);
+                } catch (error) {
+                    errorBox.style.display = 'block';
+                    errorBox.textContent = `无法获取进度：${error.message}`;
+                    window.setTimeout(pollStatus, 1500);
+                }
+            }
+
+            setProgress(0);
+            startSloganRotation();
+            pollStatus();
         });
     </script>
 </head>
@@ -52,8 +186,22 @@
     <div class="loading-card">
         <div class="spinner"></div>
         <h1>正在连接多元宇宙网络</h1>
-        <p>页面正在生成或检索中，请稍候。</p>
-        <p class="hint">如果网络较慢，loading 页面会先出现，再自动跳转到目标条目。</p>
+        <p id="slogan-value" class="slogan">正在连接大英图书馆网络系统</p>
+        <p>页面正在整理请求并接入索引，请稍候。</p>
+        <p class="target">目标：{{ target_label }}</p>
+        <div class="progress-shell" aria-label="页面生成进度">
+            <div class="progress-bar"></div>
+        </div>
+        <div class="progress-row">
+            <span>进度</span>
+            <span id="progress-value">0%</span>
+        </div>
+        <div class="progress-row">
+            <span>阶段</span>
+            <span id="stage-value" class="status-stage">等待开始</span>
+        </div>
+        <p id="message-value" class="hint">任务已创建，正在等待开始处理。</p>
+        <div id="error-box" class="error"></div>
     </div>
 </body>
 </html>

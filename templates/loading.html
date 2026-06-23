@@ -2,16 +2,58 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>加载中...</title>
     <style>
-        body { font-family: sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; background: #1a1a2e; color: white; flex-direction: column; }
-        .spinner { border: 4px solid rgba(255,255,255,0.2); border-top-color: #e0e0ff; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin-bottom: 1.5em; }
+        :root {
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --border: #c8ccd1;
+            --text: #202122;
+            --muted: #54595d;
+            --accent: #3366cc;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at top, #ffffff 0%, var(--bg) 60%, #e8edf5 100%);
+            color: var(--text);
+        }
+        .loading-card {
+            width: min(92vw, 460px);
+            padding: 2rem 1.5rem;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            background: var(--panel);
+            box-shadow: 0 18px 50px rgba(32, 33, 34, 0.12);
+            text-align: center;
+        }
+        .spinner { border: 4px solid rgba(51, 102, 204, 0.15); border-top-color: var(--accent); border-radius: 50%; width: 54px; height: 54px; animation: spin 0.9s linear infinite; margin: 0 auto 1.1rem; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        p { font-size: 1.2em; opacity: 0.8; }
+        h1 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        p { font-size: 1rem; line-height: 1.65; color: var(--muted); }
+        .hint { margin-top: 0.75rem; font-size: 0.9rem; }
     </style>
+    <meta http-equiv="refresh" content="0.25;url={{ next_url }}">
+    <script>
+        window.addEventListener('DOMContentLoaded', function () {
+            setTimeout(function () {
+                window.location.replace('{{ next_url }}');
+            }, 250);
+        });
+    </script>
 </head>
 <body>
-    <div class="spinner"></div>
-    <p>正在链接多元宇宙网络，请稍候...</p>
+    <div class="loading-card">
+        <div class="spinner"></div>
+        <h1>正在连接多元宇宙网络</h1>
+        <p>页面正在生成或检索中，请稍候。</p>
+        <p class="hint">如果网络较慢，loading 页面会先出现，再自动跳转到目标条目。</p>
+    </div>
 </body>
 </html>

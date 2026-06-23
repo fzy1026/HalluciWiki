@@ -90,10 +90,18 @@ async def generate_and_review(title: str) -> str:
 
     return reviewed_fragment
 
-def render_full_page(content_fragment: str) -> str:
+def render_full_page(content_fragment: str, page_title: str = "HalluciWiki", next_url: str = "/") -> str:
     """将内容片段插入统一布局"""
     layout = templates["layout"]
-    return layout.replace("{{ content }}", content_fragment)
+    return (
+        layout.replace("{{ title }}", page_title)
+        .replace("{{ next_url }}", next_url)
+        .replace("{{ content }}", content_fragment)
+    )
+
+def render_loading_page(next_url: str) -> str:
+    loading = templates["loading"]
+    return loading.replace("{{ next_url }}", next_url)
 
 async def get_wiki_page(title: str) -> str:
     """获取完整 HTML 页面（优先缓存）"""
@@ -104,7 +112,7 @@ async def get_wiki_page(title: str) -> str:
         return cache_path.read_text(encoding="utf-8")
 
     fragment = await generate_and_review(title)
-    full_html = render_full_page(fragment)
+    full_html = render_full_page(fragment, page_title=f"{title} - HalluciWiki")
 
     cache_path.write_text(full_html, encoding="utf-8")
     return full_html
@@ -113,16 +121,17 @@ async def get_wiki_page(title: str) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def home():
     content = templates["home_content"]
-    return HTMLResponse(render_full_page(content))
+    return HTMLResponse(render_full_page(content, page_title="HalluciWiki - 首页"))
 
 @app.get("/about", response_class=HTMLResponse)
 async def about():
     content = templates["about_content"]
-    return HTMLResponse(render_full_page(content))
+    return HTMLResponse(render_full_page(content, page_title="关于 HalluciWiki"))
 
 @app.get("/loading", response_class=HTMLResponse)
-async def loading():
-    return templates["loading"]
+async def loading(next: str = Query("/")):
+    next_url = next if next.startswith("/") else f"/{next.lstrip('/')}"
+    return HTMLResponse(render_loading_page(next_url))
 
 @app.get("/wiki/{title:path}", response_class=HTMLResponse)
 async def wiki_page(title: str):
@@ -140,7 +149,7 @@ async def search(q: str = Query(..., min_length=1)):
     prompt = SEARCH_PROMPT.format(query=q)
     try:
         fragment = await call_deepseek(prompt)
-        html = render_full_page(fragment)
+        html = render_full_page(fragment, page_title=f"搜索结果：{q}")
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")

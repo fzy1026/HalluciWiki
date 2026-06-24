@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import asyncio
 import time
@@ -13,7 +14,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
 from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES
-from prompts import GENERATE_PROMPT, REVIEW_PROMPT, SEARCH_PROMPT
+from prompts import GENERATE_PROMPT, SEARCH_PROMPT
+from html_validator import validate_html
 
 load_dotenv()
 
@@ -22,6 +24,47 @@ CACHE_DIR.mkdir(exist_ok=True)
 JOB_TTL_SECONDS = 1800
 
 JOB_STORE: dict[str, dict] = {}
+
+SEARCH_SUMMARY_CACHE: dict[str, tuple[str, float]] = {}
+
+def extract_search_summaries(html_fragment: str) -> dict[str, str]:
+    pattern = re.compile(
+        r'<li[^>]*>.*?<a\s+[^>]*href="/wiki/([^"]+)"[^>]*>(.*?)</a>(.*?)</li>',
+        re.DOTALL | re.IGNORECASE
+    )
+    summaries: dict[str, str] = {}
+    for match in pattern.finditer(html_fragment):
+        raw_title = match.group(1)
+        summary = re.sub(r'<[^>]+>', '', match.group(3)).strip()
+        if summary:
+            title = unquote(raw_title)
+            summaries[title] = summary
+    return summaries
+
+def store_search_summaries(summaries: dict[str, str]) -> None:
+    now = time.time()
+    for title, summary in summaries.items():
+        SEARCH_SUMMARY_CACHE[title] = (summary, now)
+
+def get_search_summary(title: str) -> str | None:
+    entry = SEARCH_SUMMARY_CACHE.get(title)
+    if entry is None:
+        return None
+    summary, timestamp = entry
+    if time.time() - timestamp > CACHE_TTL_SECONDS:
+        SEARCH_SUMMARY_CACHE.pop(title, None)
+        return None
+    return summary
+
+def cleanup_expired_search_summaries() -> int:
+    now = time.time()
+    deleted = 0
+    for title in list(SEARCH_SUMMARY_CACHE.keys()):
+        _, timestamp = SEARCH_SUMMARY_CACHE[title]
+        if now - timestamp > CACHE_TTL_SECONDS:
+            SEARCH_SUMMARY_CACHE.pop(title, None)
+            deleted += 1
+    return deleted
 
 def sanitize_filename(title: str) -> str:
     keepchars = (' ', '.', '_', '-')
@@ -129,6 +172,7 @@ async def lifespan(app: FastAPI):
     CACHE_DIR.mkdir(exist_ok=True)
     cleanup_expired_cache()
     cleanup_expired_jobs()
+    cleanup_expired_search_summaries()
 
     stop_event = asyncio.Event()
 
@@ -139,6 +183,7 @@ async def lifespan(app: FastAPI):
             except asyncio.TimeoutError:
                 cleanup_expired_cache()
                 cleanup_expired_jobs()
+                cleanup_expired_search_summaries()
 
     cleanup_task = asyncio.create_task(cache_cleanup_loop())
     yield
@@ -176,32 +221,37 @@ async def call_deepseek(prompt: str) -> str:
         raise HTTPException(status_code=500, detail=f"AI 调用失败: {str(e)}")
 
 async def generate_and_review(title: str, job_id: str | None = None) -> str:
-    """构建正文片段 → 整理 → 返回片段"""
+    """构建正文片段 → HTML 格式校验 → 返回片段"""
     if job_id:
         update_job(job_id, state="running", progress=25, stage="构建条目", message=f"正在整理 {title} 的正文结构。")
 
-    prompt_gen = GENERATE_PROMPT.format(title=title)
+    search_summary = get_search_summary(title)
+    summary_text = search_summary if search_summary else "（无特别约束，自由发挥）"
+    prompt_gen = GENERATE_PROMPT.format(title=title, summary=summary_text)
     raw_fragment = await call_deepseek(prompt_gen)
 
     if job_id:
-        update_job(job_id, progress=55, stage="正文完成", message="正文已整理完成，正在进入修订阶段。")
-
-    prompt_review = REVIEW_PROMPT.format(content=raw_fragment)
-    reviewed_fragment = await call_deepseek(prompt_review)
-
-    if job_id:
-        update_job(job_id, progress=80, stage="整理条目", message="正在调整 HTML 结构和百科风格语气。")
+        update_job(job_id, progress=60, stage="正文完成", message="正文已生成，正在进行 HTML 格式校验。")
 
     # 简单清理可能被 AI 意外加上的 ```html 等标记
-    if reviewed_fragment.startswith("```"):
-        reviewed_fragment = reviewed_fragment.strip("` \n")
-        if reviewed_fragment.startswith("html\n"):
-            reviewed_fragment = reviewed_fragment[5:]
+    if raw_fragment.startswith("```"):
+        raw_fragment = raw_fragment.strip("` \n")
+        if raw_fragment.startswith("html\n"):
+            raw_fragment = raw_fragment[5:]
+
+    # HTML 标签闭合校验
+    errors = validate_html(raw_fragment)
+    if errors:
+        error_summary = "; ".join(errors[:3])
+        if job_id:
+            update_job(job_id, progress=85, stage="格式警告", message=f"HTML 校验发现问题：{error_summary}")
+    elif job_id:
+        update_job(job_id, progress=85, stage="格式校验通过", message="HTML 格式校验通过。")
 
     if job_id:
-        update_job(job_id, progress=90, stage="即将完成", message="条目已整理完成，正在收尾。")
+        update_job(job_id, progress=95, stage="即将完成", message="条目已整理完成，正在收尾。")
 
-    return reviewed_fragment
+    return raw_fragment
 
 def render_full_page(content_fragment: str, page_title: str = "HalluciWiki", next_url: str = "/") -> str:
     """将内容片段插入统一布局"""
@@ -251,6 +301,9 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
 
     prompt = SEARCH_PROMPT.format(query=query)
     fragment = await call_deepseek(prompt)
+
+    summaries = extract_search_summaries(fragment)
+    store_search_summaries(summaries)
 
     if job_id:
         update_job(job_id, progress=85, stage="整理版式", message="正在整理搜索结果的 HTML 结构。")

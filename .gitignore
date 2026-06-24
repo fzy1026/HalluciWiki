@@ -2,6 +2,10 @@
 wiki/*.html
 wiki/**/*.html
 
+# Wiki generated image cache
+wiki_image/
+wiki_image/**
+
 # VS Code
 .vscode/
 

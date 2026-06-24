@@ -11,6 +11,11 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+# AIHubMix 图片生成配置
+AIHUBMIX_API_KEY = os.getenv("AIHUBMIX_API_KEY", "")
+AIHUBMIX_BASE_URL = os.getenv("AIHUBMIX_BASE_URL", "https://aihubmix.com/v1")
+AIHUBMIX_MODEL = os.getenv("AIHUBMIX_MODEL", "gemini-3.1-flash-image-preview")
+
 # 页面缓存 TTL（秒），默认 10 分钟
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "600"))
 

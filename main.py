@@ -3,6 +3,8 @@ import re
 import random
 import asyncio
 import time
+import hashlib
+import logging
 from uuid import uuid4
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -11,16 +13,23 @@ from urllib.parse import unquote, urlparse, parse_qs
 import httpx
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
-from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES
+from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES, AIHUBMIX_API_KEY
 from prompts import GENERATE_PROMPT, SEARCH_PROMPT
 from html_validator import validate_html
+from image_generator import generate_image
 
 load_dotenv()
 
+logger = logging.getLogger("halluciwiki")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s %(message)s")
+
 CACHE_DIR = Path("wiki")
 CACHE_DIR.mkdir(exist_ok=True)
+IMAGE_CACHE_DIR = Path("wiki_image")
+IMAGE_CACHE_DIR.mkdir(exist_ok=True)
 JOB_TTL_SECONDS = 1800
 
 JOB_STORE: dict[str, dict] = {}
@@ -64,6 +73,23 @@ def cleanup_expired_search_summaries() -> int:
         if now - timestamp > CACHE_TTL_SECONDS:
             SEARCH_SUMMARY_CACHE.pop(title, None)
             deleted += 1
+    return deleted
+
+def image_filename(prompt: str) -> str:
+    return hashlib.sha256(prompt.encode()).hexdigest()[:16] + ".png"
+
+def cleanup_expired_images() -> int:
+    deleted = 0
+    now = time.time()
+    for image_file in IMAGE_CACHE_DIR.glob("*.png"):
+        try:
+            if now - image_file.stat().st_mtime > CACHE_TTL_SECONDS:
+                image_file.unlink()
+                deleted += 1
+        except (FileNotFoundError, OSError):
+            continue
+    if deleted:
+        logger.info("图片缓存清理完成 | 删除: %d 个过期文件", deleted)
     return deleted
 
 def sanitize_filename(title: str) -> str:
@@ -170,9 +196,11 @@ async def lifespan(app: FastAPI):
     async_client = httpx.AsyncClient(timeout=60.0)
     load_templates()
     CACHE_DIR.mkdir(exist_ok=True)
+    IMAGE_CACHE_DIR.mkdir(exist_ok=True)
     cleanup_expired_cache()
     cleanup_expired_jobs()
     cleanup_expired_search_summaries()
+    cleanup_expired_images()
 
     stop_event = asyncio.Event()
 
@@ -184,6 +212,7 @@ async def lifespan(app: FastAPI):
                 cleanup_expired_cache()
                 cleanup_expired_jobs()
                 cleanup_expired_search_summaries()
+                cleanup_expired_images()
 
     cleanup_task = asyncio.create_task(cache_cleanup_loop())
     yield
@@ -198,6 +227,56 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # ---------- 工具函数 ----------
+IMAGE_PLACEHOLDER = re.compile(r'\[IMAGE:\s*(.*?)\]')
+
+async def process_image_placeholders(html: str) -> str:
+    matches = list(IMAGE_PLACEHOLDER.finditer(html))
+    if not matches:
+        return html
+
+    logger.info("检测到 %d 个插图占位符，开始处理", len(matches))
+
+    result = html
+    for match in reversed(matches):
+        description = match.group(1).strip()
+        fname = image_filename(description)
+        filepath = IMAGE_CACHE_DIR / fname
+
+        if filepath.exists():
+            if not is_cache_fresh(filepath):
+                logger.info("插图缓存已过期 | 文件: %s", fname)
+                try:
+                    filepath.unlink()
+                except OSError:
+                    pass
+            else:
+                logger.info("插图命中缓存 | 文件: %s", fname)
+
+        if not filepath.exists():
+            image_bytes = await generate_image(async_client, description)
+            if image_bytes:
+                try:
+                    filepath.write_bytes(image_bytes)
+                    logger.info("插图已写入磁盘 | 文件: %s | 大小: %d bytes", fname, len(image_bytes))
+                except OSError as e:
+                    logger.error("插图写入失败 | 文件: %s | 错误: %s", fname, e)
+            else:
+                logger.warning("插图生成失败，将显示占位提示 | 描述: %s", description[:80])
+
+        if filepath.exists():
+            img_tag = (
+                f'<figure style="margin:1.5rem 0;text-align:center;">'
+                f'<img src="/image/{fname}" alt="{description}" '
+                f'style="max-width:100%;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">'
+                f'<figcaption style="color:#54595d;font-size:0.9rem;margin-top:0.5rem;">{description}</figcaption>'
+                f'</figure>'
+            )
+        else:
+            img_tag = f'<p style="color:#a2a9b1;font-style:italic;">[插图：{description} — 生成失败]</p>'
+        result = result[:match.start()] + img_tag + result[match.end():]
+
+    return result
+
 async def call_deepseek(prompt: str) -> str:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -244,9 +323,15 @@ async def generate_and_review(title: str, job_id: str | None = None) -> str:
     if errors:
         error_summary = "; ".join(errors[:3])
         if job_id:
-            update_job(job_id, progress=85, stage="格式警告", message=f"HTML 校验发现问题：{error_summary}")
+            update_job(job_id, progress=80, stage="格式警告", message=f"HTML 校验发现问题：{error_summary}")
     elif job_id:
-        update_job(job_id, progress=85, stage="格式校验通过", message="HTML 格式校验通过。")
+        update_job(job_id, progress=80, stage="格式校验通过", message="HTML 格式校验通过。")
+
+    # 处理插图占位符 [IMAGE: ...]
+    if AIHUBMIX_API_KEY and IMAGE_PLACEHOLDER.search(raw_fragment):
+        if job_id:
+            update_job(job_id, progress=85, stage="调取插图", message="正在从档案库中调取插图资料。")
+        raw_fragment = await process_image_placeholders(raw_fragment)
 
     if job_id:
         update_job(job_id, progress=95, stage="即将完成", message="条目已整理完成，正在收尾。")
@@ -420,3 +505,5 @@ async def job_result(job_id: str):
         raise HTTPException(status_code=425, detail="任务尚未完成")
 
     return HTMLResponse(content=job["result_html"])
+
+app.mount("/image", StaticFiles(directory="wiki_image"), name="image")

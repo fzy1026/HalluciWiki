@@ -209,10 +209,58 @@
                 width: 100%;
             }
         }
+        .img-opt {
+            font-size: 0.82rem;
+            margin-left: 0.15rem;
+            opacity: 0.45;
+            transition: opacity 0.2s;
+            text-decoration: none !important;
+        }
+        .img-opt:hover {
+            opacity: 1;
+            text-decoration: none !important;
+        }
+        .img-toggle-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.88rem;
+            color: var(--muted);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .img-toggle-wrap input { display: none; }
+        .img-toggle-track {
+            width: 2.2rem;
+            height: 1.15rem;
+            background: #c8ccd1;
+            border-radius: 999px;
+            position: relative;
+            transition: background 0.2s;
+        }
+        .img-toggle-track::after {
+            content: '';
+            position: absolute;
+            top: 0.12rem;
+            left: 0.12rem;
+            width: 0.9rem;
+            height: 0.9rem;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .img-toggle-wrap input:checked + .img-toggle-track {
+            background: #3366cc;
+        }
+        .img-toggle-wrap input:checked + .img-toggle-track::after {
+            transform: translateX(1.05rem);
+        }
     </style>
     <script>
         (function () {
             const loadingPrefix = '/loading?next=';
+            const IMG_STORAGE_KEY = 'halluciwiki_img_enabled';
 
             function shouldIgnoreLink(link, event) {
                 if (!link) return true;
@@ -226,6 +274,33 @@
                 window.location.href = loadingPrefix + encodeURIComponent(nextUrl);
             }
 
+            function imageEnabled() {
+                const toggle = document.getElementById('img-toggle');
+                return toggle && toggle.checked;
+            }
+
+            function appendImageParam(url) {
+                if (!imageEnabled()) return url;
+                return url + (url.includes('?') ? '&image=1' : '?image=1');
+            }
+
+            function persistImageToggle() {
+                try {
+                    localStorage.setItem(IMG_STORAGE_KEY, imageEnabled() ? '1' : '0');
+                } catch (e) { /* ignore */ }
+            }
+
+            function loadImageToggle() {
+                var toggle = document.getElementById('img-toggle');
+                if (!toggle) return;
+                try {
+                    toggle.checked = localStorage.getItem(IMG_STORAGE_KEY) === '1';
+                } catch (e) { /* ignore */ }
+                toggle.addEventListener('change', persistImageToggle);
+            }
+
+            document.addEventListener('DOMContentLoaded', loadImageToggle);
+
             document.addEventListener('click', function (event) {
                 const link = event.target.closest('a[href]');
                 if (!link || shouldIgnoreLink(link, event)) {
@@ -235,7 +310,7 @@
                 const href = link.getAttribute('href');
                 if (href.startsWith('/wiki/') || href.startsWith('/search') || href === '/random') {
                     event.preventDefault();
-                    goToLoading(href);
+                    goToLoading(appendImageParam(href));
                 }
             });
 
@@ -266,6 +341,11 @@
             <a href="/">首页</a>
             <a href="/about">关于本站</a>
             <a href="/random">随机条目</a>
+            <label class="img-toggle-wrap" title="在条目中显示插图">
+                <input type="checkbox" id="img-toggle">
+                <span class="img-toggle-track"></span>
+                <span>插图</span>
+            </label>
         </nav>
         <div class="nav-search">
             <form action="/search" method="get" data-wiki-nav>

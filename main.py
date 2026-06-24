@@ -26,6 +26,12 @@ load_dotenv()
 logger = logging.getLogger("halluciwiki")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s %(message)s")
 
+class SuppressJobPollingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/jobs/" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(SuppressJobPollingFilter())
+
 CACHE_DIR = Path("wiki")
 CACHE_DIR.mkdir(exist_ok=True)
 IMAGE_CACHE_DIR = Path("wiki_image")
@@ -236,8 +242,9 @@ async def process_image_placeholders(html: str) -> str:
 
     logger.info("检测到 %d 个插图占位符，开始处理", len(matches))
 
-    result = html
-    for match in reversed(matches):
+    # 第一阶段：检查缓存，收集需要调用 API 的任务
+    pending: list[tuple[re.Match, str, str, Path]] = []
+    for match in matches:
         description = match.group(1).strip()
         fname = image_filename(description)
         filepath = IMAGE_CACHE_DIR / fname
@@ -253,15 +260,33 @@ async def process_image_placeholders(html: str) -> str:
                 logger.info("插图命中缓存 | 文件: %s", fname)
 
         if not filepath.exists():
-            image_bytes = await generate_image(async_client, description)
-            if image_bytes:
+            pending.append((match, description, fname, filepath))
+
+    # 第二阶段：并行生成所有未命中的图片
+    if pending:
+        logger.info("开始并行生成 %d 张插图", len(pending))
+        results = await asyncio.gather(
+            *(generate_image(async_client, desc) for _, desc, _, _ in pending),
+            return_exceptions=True,
+        )
+        for (_, desc, fname, filepath), image_bytes in zip(pending, results):
+            if isinstance(image_bytes, Exception):
+                logger.warning("插图生成失败 | 描述: %s | 错误: %s", desc[:80], image_bytes)
+            elif image_bytes is None:
+                logger.warning("插图生成失败，将显示占位提示 | 描述: %s", desc[:80])
+            else:
                 try:
                     filepath.write_bytes(image_bytes)
                     logger.info("插图已写入磁盘 | 文件: %s | 大小: %d bytes", fname, len(image_bytes))
                 except OSError as e:
                     logger.error("插图写入失败 | 文件: %s | 错误: %s", fname, e)
-            else:
-                logger.warning("插图生成失败，将显示占位提示 | 描述: %s", description[:80])
+
+    # 第三阶段：替换 HTML 占位符（从后往前避免索引错乱）
+    result = html
+    for match in reversed(matches):
+        description = match.group(1).strip()
+        fname = image_filename(description)
+        filepath = IMAGE_CACHE_DIR / fname
 
         if filepath.exists():
             img_tag = (
@@ -299,14 +324,19 @@ async def call_deepseek(prompt: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI 调用失败: {str(e)}")
 
-async def generate_and_review(title: str, job_id: str | None = None) -> str:
+async def generate_and_review(title: str, enable_images: bool = False, job_id: str | None = None) -> str:
     """构建正文片段 → HTML 格式校验 → 返回片段"""
     if job_id:
         update_job(job_id, state="running", progress=25, stage="构建条目", message=f"正在整理 {title} 的正文结构。")
 
     search_summary = get_search_summary(title)
     summary_text = search_summary if search_summary else "（无特别约束，自由发挥）"
-    prompt_gen = GENERATE_PROMPT.format(title=title, summary=summary_text)
+
+    image_instruction = (
+        "- 在适当位置插入插图占位符，格式为 [IMAGE: 图片描述]。例如 [IMAGE: 一幅展示量子纠缠原理的示意图，包含两个纠缠粒子之间的连接线]。每个条目建议插入 1-2 个插图占位符，描述应具体、可视化，便于生成准确的图片。占位符应放在相关段落之后，独立成行。"
+        if enable_images else ""
+    )
+    prompt_gen = GENERATE_PROMPT.format(title=title, summary=summary_text, image_instruction=image_instruction)
     raw_fragment = await call_deepseek(prompt_gen)
 
     if job_id:
@@ -327,8 +357,8 @@ async def generate_and_review(title: str, job_id: str | None = None) -> str:
     elif job_id:
         update_job(job_id, progress=80, stage="格式校验通过", message="HTML 格式校验通过。")
 
-    # 处理插图占位符 [IMAGE: ...]
-    if AIHUBMIX_API_KEY and IMAGE_PLACEHOLDER.search(raw_fragment):
+    # 处理插图占位符 [IMAGE: ...]（仅在启用插图时）
+    if enable_images and AIHUBMIX_API_KEY and IMAGE_PLACEHOLDER.search(raw_fragment):
         if job_id:
             update_job(job_id, progress=85, stage="调取插图", message="正在从档案库中调取插图资料。")
         raw_fragment = await process_image_placeholders(raw_fragment)
@@ -356,10 +386,11 @@ def render_loading_page(next_url: str, job_id: str, target_label: str, result_ur
         .replace("{{ result_url }}", result_url)
     )
 
-async def get_wiki_page(title: str, job_id: str | None = None) -> str:
+async def get_wiki_page(title: str, enable_images: bool = False, job_id: str | None = None) -> str:
     """获取完整 HTML 页面（优先缓存）"""
-    safe_name = sanitize_filename(title)
-    cache_path = CACHE_DIR / safe_name
+    base_name = sanitize_filename(title)
+    cache_name = base_name if not enable_images else base_name.replace(".html", "_image.html")
+    cache_path = CACHE_DIR / cache_name
 
     if is_cache_fresh(cache_path):
         if job_id:
@@ -372,7 +403,7 @@ async def get_wiki_page(title: str, job_id: str | None = None) -> str:
         except OSError:
             pass
 
-    fragment = await generate_and_review(title, job_id=job_id)
+    fragment = await generate_and_review(title, enable_images=enable_images, job_id=job_id)
     full_html = render_full_page(fragment, page_title=f"{title} - HalluciWiki")
 
     cache_path.write_text(full_html, encoding="utf-8")
@@ -402,13 +433,15 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
 
 async def generate_page_for_target(target_url: str, job_id: str) -> None:
     parsed = urlparse(target_url)
+    query_params = parse_qs(parsed.query)
+    enable_images = query_params.get("image", ["0"])[0] == "1"
 
     try:
         update_job(job_id, state="running", progress=10, stage="解析请求", message=f"正在处理 {describe_target(target_url)}。")
 
         if parsed.path.startswith("/wiki/"):
             title = unquote(parsed.path[len("/wiki/"):]) or "首页"
-            html = await get_wiki_page(title, job_id=job_id)
+            html = await get_wiki_page(title, enable_images=enable_images, job_id=job_id)
             update_job(job_id, result_html=html, state="done")
             return
 
@@ -423,7 +456,7 @@ async def generate_page_for_target(target_url: str, job_id: str) -> None:
         if parsed.path == "/random":
             entry = random.choice(RANDOM_ENTRIES)
             update_job(job_id, progress=40, stage="选择随机条目", message=f"已选中条目：{entry}。正在整理页面。")
-            html = await get_wiki_page(entry, job_id=job_id)
+            html = await get_wiki_page(entry, enable_images=enable_images, job_id=job_id)
             update_job(job_id, result_html=html, state="done", message=f"随机条目 {entry} 已准备好。")
             return
 
@@ -452,12 +485,12 @@ async def loading(next: str = Query("/")):
     return HTMLResponse(render_loading_page(next_url, job_id, target_label, result_url))
 
 @app.get("/wiki/{title:path}", response_class=HTMLResponse)
-async def wiki_page(title: str):
+async def wiki_page(title: str, image: bool = Query(False)):
     title = unquote(title)
     if not title:
         title = "首页"
     try:
-        html = await get_wiki_page(title)
+        html = await get_wiki_page(title, enable_images=image)
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -471,9 +504,10 @@ async def search(q: str = Query(..., min_length=1)):
         raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
 
 @app.get("/random")
-async def random_page():
+async def random_page(image: bool = Query(False)):
     entry = random.choice(RANDOM_ENTRIES)
-    return RedirectResponse(f"/wiki/{entry}")
+    suffix = "?image=1" if image else ""
+    return RedirectResponse(f"/wiki/{entry}{suffix}")
 
 @app.get("/health")
 async def health():

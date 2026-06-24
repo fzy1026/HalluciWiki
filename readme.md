@@ -1,4 +1,4 @@
-# 62.234.165.125 —— 幻觉维基百科
+# 哈鲁百科——幻觉维基百科
 
 一个由 AI 动态生成的"幻觉维基百科"，所有页面均由大语言模型实时创造，支持缓存和二次修正。无论是真实存在的概念还是完全虚构的条目，AI 都会以严肃专业的百科语调进行撰写，打造一个亦真亦幻的知识宇宙。
 
@@ -66,7 +66,7 @@ wiki/
 ### 1. 克隆项目
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/fzy1026/HalluciWiki.git
 cd wiki
 ```
 
@@ -235,7 +235,7 @@ Docker 部署可以省去手动配置 Python 环境、nginx 反向代理、syste
 #### 1. 克隆项目并配置
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/fzy1026/HalluciWiki.git
 cd wiki
 cp .env.example .env
 # 编辑 .env 填入 API Key（参考方式一中的配置说明）

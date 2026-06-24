@@ -1,0 +1,12 @@
+services:
+  halluciwiki:
+    build: .
+    container_name: halluciwiki
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./wiki:/app/wiki
+      - ./wiki_image:/app/wiki_image
+    restart: unless-stopped

@@ -626,7 +626,7 @@ async def create_share(request: Request):
     else:
         raise HTTPException(status_code=400, detail="不支持的分享目标")
 
-    share_id = uuid4().hex[:8]
+    share_id = hashlib.sha256(target_url.encode()).hexdigest()[:8]
     share_path = SHARES_DIR / f"{share_id}.html"
 
     html_with_banner = html.replace(

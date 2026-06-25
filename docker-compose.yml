@@ -8,7 +8,6 @@ services:
       - .env
     volumes:
       - ./wiki:/app/wiki
-      - ./wiki_image:/app/wiki_image
       - ./shares:/app/shares
     restart: unless-stopped
   caddy:

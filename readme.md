@@ -236,7 +236,7 @@ Docker 部署可以省去手动配置 Python 环境、nginx 反向代理、syste
 
 ```bash
 git clone https://github.com/fzy1026/HalluciWiki.git
-cd wiki
+cd HalluciWiki
 cp .env.example .env
 # 编辑 .env 填入 API Key（参考方式一中的配置说明）
 ```
@@ -284,19 +284,244 @@ ports:
 
 #### 生产环境建议
 
-如果需要在公网对外提供服务，建议在 Docker 前面加一层反向代理（如 Nginx、Caddy 或 Cloudflare Tunnel），用于处理 HTTPS 和域名。最简单的方案是使用 Caddy：
+如果需要在公网对外提供服务，强烈建议在应用前面加一层反向代理，用于处理 HTTPS、域名绑定、限流和安全防护。FastAPI 本身不推荐直接暴露在公网。
 
-```bash
-# 在 docker-compose.yml 同级目录创建 Caddyfile
-# 然后运行: docker run -d -p 80:80 -p 443:443 -v ./Caddyfile:/etc/caddy/Caddyfile caddy
-```
+以下是三种主流方案，按推荐程度排序：
 
-Caddyfile 示例：
-```
+---
+
+##### 方案一：Caddy（最简单，推荐）
+
+[Caddy](https://caddyserver.com/) 是一个零配置、自动申请和续期 SSL 证书的反向代理服务器，非常适合个人项目。
+
+**步骤 1：创建 `Caddyfile`**
+
+在项目根目录（`docker-compose.yml` 同级）创建 `Caddyfile`：
+
+```caddy
 your-domain.com {
     reverse_proxy localhost:8000
+    encode gzip
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
 }
 ```
+
+**步骤 2：启动 Caddy**
+
+```bash
+docker run -d \
+    --name caddy \
+    --network host \
+    -v ./Caddyfile:/etc/caddy/Caddyfile \
+    -v caddy_data:/data \
+    --restart unless-stopped \
+    caddy:latest
+```
+
+> **说明**：`--network host` 让 Caddy 容器直接使用宿主机网络，从而能通过 `localhost:8000` 访问你的应用容器。如果你的应用容器有自定义网络，请将 `localhost:8000` 替换为 `容器名:8000`。
+
+**步骤 3（可选）：将 Caddy 集成到 `docker-compose.yml`**
+
+在 `docker-compose.yml` 的 `services` 下添加：
+
+```yaml
+services:
+  app:
+    # ... 原有的 app 服务配置 ...
+
+  caddy:
+    image: caddy:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    restart: unless-stopped
+    depends_on:
+      - app
+```
+
+然后将 `Caddyfile` 中的 `localhost:8000` 改为 `app:8000`（Docker 内部网络通过服务名访问）。
+
+---
+
+##### 方案二：Nginx（经典通用）
+
+Nginx 是最成熟的反向代理方案，生态丰富，适合需要精细化控制的场景。
+
+**步骤 1：创建 Nginx 配置文件**
+
+在项目根目录创建 `nginx.conf`：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    location / {
+        proxy_pass http://app:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}
+```
+
+**步骤 2：获取 SSL 证书**
+
+推荐使用 [acme.sh](https://github.com/acmesh-official/acme.sh) 或 [Certbot](https://certbot.eff.org/) 免费申请 Let's Encrypt 证书：
+
+```bash
+# 使用 acme.sh（推荐，无需 root 权限）
+curl https://get.acme.sh | sh
+acme.sh --issue -d your-domain.com --nginx
+acme.sh --install-cert -d your-domain.com \
+    --key-file /path/to/ssl/privkey.pem \
+    --fullchain-file /path/to/ssl/fullchain.pem
+```
+
+**步骤 3：集成到 `docker-compose.yml`**
+
+```yaml
+services:
+  app:
+    # ... 原有的 app 服务配置 ...
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./ssl:/etc/nginx/ssl
+    restart: unless-stopped
+    depends_on:
+      - app
+```
+
+---
+
+##### 方案三：Cloudflare Tunnel（无需公网 IP）
+
+如果你没有公网 IP 或不想开放端口，可以使用 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 将本地服务安全地暴露到公网，且自带 HTTPS 和 DDoS 防护。
+
+**前提条件**：拥有一个托管在 Cloudflare 的域名。
+
+**步骤 1：创建 Tunnel**
+
+```bash
+# 安装 cloudflared
+# Windows: 下载 https://github.com/cloudflare/cloudflared/releases
+# Linux/macOS: 使用包管理器安装
+
+# 登录并创建隧道
+cloudflared tunnel login
+cloudflared tunnel create halluciwiki
+```
+
+**步骤 2：配置 DNS 并启动**
+
+```bash
+# 将隧道绑定到域名
+cloudflared tunnel route dns halluciwiki your-domain.com
+
+# 启动隧道（指向本地服务）
+cloudflared tunnel run --url http://localhost:8000 halluciwiki
+```
+
+**步骤 3（推荐）：作为服务长期运行**
+
+```bash
+cloudflared tunnel install --name halluciwiki
+```
+
+或在 `docker-compose.yml` 中集成：
+
+```yaml
+services:
+  app:
+    # ... 原有的 app 服务配置 ...
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - app
+```
+
+> Cloudflare Tunnel 的自动 HTTPS、DDoS 防护和全球 CDN 加速均为免费功能，非常适合个人项目。
+
+---
+
+##### 安全加固建议
+
+无论选择哪种方案，建议额外做以下配置：
+
+| 措施 | 说明 |
+|------|------|
+| **速率限制** | 在 Nginx/Caddy 中配置 `rate limiting`，防止 API 被滥用 |
+| **IP 白名单** | 如果仅自己使用，可限制来源 IP（Cloudflare 支持 WAF 规则） |
+| **关闭调试模式** | 生产环境不要使用 `--reload` 模式启动 uvicorn |
+| **定期更新** | 定期执行 `docker compose pull` 更新基础镜像 |
+| **环境变量保护** | 确保 `.env` 文件权限为 `600`，且不被 Git 提交 |
+| **日志监控** | 配置 `docker compose logs` 或接入 Loki/Promtail 等日志系统 |
+
+Caddy 速率限制示例（`Caddyfile`）：
+
+```caddy
+your-domain.com {
+    reverse_proxy localhost:8000
+    rate_limit {
+        zone dynamic {
+            key {remote_host}
+            events 30
+            window 1m
+        }
+    }
+}
+```
+
+Nginx 速率限制示例（`nginx.conf`）：
+
+```nginx
+limit_req_zone $binary_remote_addr zone=wiki:10m rate=10r/s;
+
+server {
+    # ...
+    location / {
+        limit_req zone=wiki burst=20 nodelay;
+        proxy_pass http://app:8000;
+    }
+}
+```
+
+---
+
+> **注意**：以上配置同样适用于非 Docker 的本地部署场景，只需将 `proxy_pass`/`reverse_proxy` 的目标地址指向 `localhost:8000`（或你实际使用的端口）即可。
 
 ## API 路由一览
 

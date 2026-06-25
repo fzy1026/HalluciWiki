@@ -46,17 +46,30 @@ SHARE_STORE: dict[str, dict] = {}
 SEARCH_SUMMARY_CACHE: dict[str, tuple[str, float]] = {}
 
 def extract_search_summaries(html_fragment: str) -> dict[str, str]:
-    pattern = re.compile(
+    summaries: dict[str, str] = {}
+
+    pattern_text = re.compile(
         r'<li[^>]*>.*?<a\s+[^>]*href="/wiki/([^"]+)"[^>]*>(.*?)</a>(.*?)</li>',
         re.DOTALL | re.IGNORECASE
     )
-    summaries: dict[str, str] = {}
-    for match in pattern.finditer(html_fragment):
+    for match in pattern_text.finditer(html_fragment):
         raw_title = match.group(1)
         summary = re.sub(r'<[^>]+>', '', match.group(3)).strip()
         if summary:
             title = unquote(raw_title)
             summaries[title] = summary
+
+    pattern_attr = re.compile(
+        r'<a\s+[^>]*href="/wiki/([^"]+)"[^>]*data-summary="([^"]*)"[^>]*>',
+        re.DOTALL | re.IGNORECASE
+    )
+    for match in pattern_attr.finditer(html_fragment):
+        raw_title = match.group(1)
+        summary = match.group(2).strip()
+        if summary and unquote(raw_title) not in summaries:
+            title = unquote(raw_title)
+            summaries[title] = summary
+
     return summaries
 
 def store_search_summaries(summaries: dict[str, str]) -> None:
@@ -346,13 +359,18 @@ async def call_deepseek(prompt: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI 调用失败: {str(e)}")
 
-async def generate_and_review(title: str, enable_images: bool = False, job_id: str | None = None) -> str:
+async def generate_and_review(title: str, enable_images: bool = False, job_id: str | None = None, link_summary: str = "") -> str:
     """构建正文片段 → HTML 格式校验 → 返回片段"""
     if job_id:
         update_job(job_id, state="running", progress=25, stage="构建条目", message=f"正在整理 {title} 的正文结构。")
 
     search_summary = get_search_summary(title)
-    summary_text = search_summary if search_summary else "（无特别约束，自由发挥）"
+    if link_summary:
+        summary_text = link_summary
+    elif search_summary:
+        summary_text = search_summary
+    else:
+        summary_text = "（无特别约束，自由发挥）"
 
     image_instruction = (
         "- 在适当位置插入插图占位符，格式为 [IMAGE: 图片描述]。例如 [IMAGE: 一幅展示量子纠缠原理的示意图，包含两个纠缠粒子之间的连接线]。每个条目建议插入 1-2 个插图占位符，描述应具体、可视化，便于生成准确的图片。占位符应放在相关段落之后，独立成行。"
@@ -410,7 +428,7 @@ def render_loading_page(next_url: str, job_id: str, target_label: str, result_ur
         .replace("{{ result_url }}", result_url)
     )
 
-async def get_wiki_page(title: str, enable_images: bool = False, job_id: str | None = None) -> str:
+async def get_wiki_page(title: str, enable_images: bool = False, job_id: str | None = None, link_summary: str = "") -> str:
     """获取完整 HTML 页面（优先缓存）"""
     base_name = sanitize_filename(title)
     cache_name = base_name if not enable_images else base_name.replace(".html", "_image.html")
@@ -427,7 +445,7 @@ async def get_wiki_page(title: str, enable_images: bool = False, job_id: str | N
         except OSError:
             pass
 
-    fragment = await generate_and_review(title, enable_images=enable_images, job_id=job_id)
+    fragment = await generate_and_review(title, enable_images=enable_images, job_id=job_id, link_summary=link_summary)
     full_html = render_full_page(fragment, page_title=f"{title} - HalluciWiki", share_target=f"/wiki/{quote(title)}")
 
     cache_path.write_text(full_html, encoding="utf-8")
@@ -459,13 +477,14 @@ async def generate_page_for_target(target_url: str, job_id: str) -> None:
     parsed = urlparse(target_url)
     query_params = parse_qs(parsed.query)
     enable_images = query_params.get("image", ["0"])[0] == "1"
+    link_summary = query_params.get("summary", [""])[0]
 
     try:
         update_job(job_id, state="running", progress=10, stage="解析请求", message=f"正在处理 {describe_target(target_url)}。")
 
         if parsed.path.startswith("/wiki/"):
             title = unquote(parsed.path[len("/wiki/"):]) or "首页"
-            html = await get_wiki_page(title, enable_images=enable_images, job_id=job_id)
+            html = await get_wiki_page(title, enable_images=enable_images, job_id=job_id, link_summary=link_summary)
             update_job(job_id, result_html=html, state="done")
             return
 
@@ -509,12 +528,12 @@ async def loading(next: str = Query("/")):
     return HTMLResponse(render_loading_page(next_url, job_id, target_label, result_url))
 
 @app.get("/wiki/{title:path}", response_class=HTMLResponse)
-async def wiki_page(title: str, image: bool = Query(False)):
+async def wiki_page(title: str, image: bool = Query(False), summary: str = Query("")):
     title = unquote(title)
     if not title:
         title = "首页"
     try:
-        html = await get_wiki_page(title, enable_images=image)
+        html = await get_wiki_page(title, enable_images=image, link_summary=summary)
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -386,6 +386,43 @@
             font-size: 0.9rem;
             margin: 0.5rem 0;
         }
+        /* ---------- 链接摘要悬浮提示 ---------- */
+        a[data-summary] {
+            position: relative;
+            text-decoration-style: dotted;
+            text-decoration-color: var(--link);
+            cursor: help;
+        }
+        a[data-summary]:hover {
+            text-decoration-style: solid;
+        }
+        a[data-summary]::after {
+            content: attr(data-summary);
+            position: absolute;
+            left: 0;
+            bottom: calc(100% + 8px);
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e8eef5;
+            padding: 0.6rem 0.9rem;
+            border-radius: 8px;
+            font-size: 0.84rem;
+            font-weight: 400;
+            white-space: normal;
+            max-width: 380px;
+            min-width: 160px;
+            z-index: 1000;
+            line-height: 1.55;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.28);
+            pointer-events: none;
+            word-break: break-word;
+            opacity: 0;
+            transform: translateY(4px);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        a[data-summary]:hover::after {
+            opacity: 1;
+            transform: translateY(0);
+        }
     </style>
     <script>
         (function () {
@@ -438,9 +475,17 @@
                 }
 
                 const href = link.getAttribute('href');
+                const summary = link.getAttribute('data-summary') || '';
+                let finalHref = href;
+
+                if (summary && (href.startsWith('/wiki/') || href.startsWith('/search'))) {
+                    const sep = href.includes('?') ? '&' : '?';
+                    finalHref = href + sep + 'summary=' + encodeURIComponent(summary);
+                }
+
                 if (href.startsWith('/wiki/') || href.startsWith('/search') || href === '/random') {
                     event.preventDefault();
-                    goToLoading(appendImageParam(href));
+                    goToLoading(appendImageParam(finalHref));
                 }
             });
 

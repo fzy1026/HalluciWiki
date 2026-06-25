@@ -1,0 +1,9 @@
+chamdev.site {
+    reverse_proxy halluciwiki:8000
+    encode gzip
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+}

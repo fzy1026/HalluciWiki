@@ -17,15 +17,15 @@
 
 ## 技术栈
 
-| 组件        | 技术                                       |
-| ----------- | ------------------------------------------ |
-| Web 框架    | [FastAPI](https://fastapi.tiangolo.com/)      |
-| 服务器      | [Uvicorn](https://www.uvicorn.org/)           |
+| 组件 | 技术 |
+|------|------|
+| Web 框架 | [FastAPI](https://fastapi.tiangolo.com/) |
+| 服务器 | [Uvicorn](https://www.uvicorn.org/) |
 | HTTP 客户端 | [httpx](https://www.python-httpx.org/) (异步) |
-| 文本生成    | DeepSeek API (OpenAI 兼容)                 |
-| 图片生成    | AIHubMix API (可选)                        |
-| 环境管理    | python-dotenv                              |
-| 图片处理    | Pillow                                     |
+| 文本生成 | DeepSeek API (OpenAI 兼容) |
+| 图片生成 | AIHubMix API (可选) |
+| 环境管理 | python-dotenv |
+| 图片处理 | Pillow |
 
 ## 项目结构
 
@@ -73,14 +73,12 @@ cd wiki
 ### 2. 创建虚拟环境
 
 **Windows (PowerShell):**
-
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
 **macOS / Linux:**
-
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -125,14 +123,14 @@ DEEPSEEK_MODEL=deepseek-chat
 
 文本生成使用的是 OpenAI 兼容的 `/v1/chat/completions` 接口，因此任何兼容 OpenAI 协议的 API 都可以直接替换，只需修改 `.env` 中的三个变量即可，**无需改动任何代码**：
 
-| 服务商               | DEEPSEEK_BASE_URL                                     | DEEPSEEK_MODEL                 |
-| -------------------- | ----------------------------------------------------- | ------------------------------ |
-| DeepSeek（默认）     | `https://api.deepseek.com`                          | `deepseek-chat`              |
-| OpenAI               | `https://api.openai.com/v1`                         | `gpt-4o` / `gpt-3.5-turbo` |
-| 通义千问（阿里云）   | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`                  |
-| Moonshot（月之暗面） | `https://api.moonshot.cn/v1`                        | `moonshot-v1-8k`             |
-| 智谱 GLM             | `https://open.bigmodel.cn/api/paas/v4`              | `glm-4`                      |
-| 其他 OpenAI 兼容代理 | 填写对应地址                                          | 填写对应模型名                 |
+| 服务商 | DEEPSEEK_BASE_URL | DEEPSEEK_MODEL |
+|--------|-------------------|----------------|
+| DeepSeek（默认） | `https://api.deepseek.com` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o` / `gpt-3.5-turbo` |
+| 通义千问（阿里云） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| Moonshot（月之暗面） | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4` |
+| 其他 OpenAI 兼容代理 | 填写对应地址 | 填写对应模型名 |
 
 示例——改用 OpenAI：
 
@@ -228,7 +226,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 3000
 
 ### 方式二：Docker 部署（推荐用于服务器）
 
-Docker 部署可以省去手动配置 Python 环境、nginx 反向代理、systemd 服务的繁琐步骤，一条命令即可启动。
+Docker 部署可以省去手动配置 Python 环境、反向代理、systemd 服务的繁琐步骤，一条命令即可启动。项目已内置 Caddy 反向代理，支持域名访问和自动 HTTPS。
 
 #### 环境要求
 
@@ -243,332 +241,119 @@ cp .env.example .env
 # 编辑 .env 填入 API Key（参考方式一中的配置说明）
 ```
 
-#### 2. 一键启动
+#### 2. 配置域名（可选）
+
+如果希望通过域名访问，编辑 `Caddyfile`，将 `your-domain.com` 替换为你的域名：
+
+```caddyfile
+你的域名 {
+    reverse_proxy halluciwiki:8000
+    encode gzip
+}
+```
+
+Caddy 默认会自动申请 Let's Encrypt HTTPS 证书。如果服务器防火墙未开放 443 端口导致证书申请失败，在域名前加 `http://` 前缀即可禁用 HTTPS 回退到纯 HTTP。
+
+如果不需要域名，直接通过 IP:8000 访问即可，无需修改 Caddyfile。
+
+#### 3. 一键启动
 
 ```bash
 docker compose up -d
 ```
 
-首次运行会自动构建镜像，之后启动只需几秒。服务默认运行在 **http://localhost:8000**。
+首次运行会自动构建镜像。如果 pip 下载依赖较慢，Dockerfile 已配置使用清华 PyPI 镜像源加速。
 
-#### 3. 常用命令
+#### 4. 访问
+
+- **直接访问**：`http://你的服务器IP:8000`
+- **域名访问**：`http://你的域名`（需先完成第 2 步配置，并确保防火墙放行 80 端口）
+
+#### 5. 常用命令
 
 ```bash
-docker compose up -d        # 后台启动
-docker compose down         # 停止服务
-docker compose restart      # 重启服务
-docker compose logs -f      # 查看实时日志
-docker compose pull         # 拉取最新基础镜像
-docker compose up -d --build  # 重新构建并启动（代码更新后）
+docker compose up -d           # 后台启动
+docker compose down            # 停止服务
+docker compose restart         # 重启服务
+docker compose logs -f         # 查看实时日志
+docker compose up -d --build   # 重新构建并启动（代码更新后）
 ```
-
-#### 架构说明
-
-`docker-compose.yml` 帮你自动处理了以下事项，无需再手动折腾：
-
-| 你原本需要手动做的事                | Docker 自动处理                         |
-| ----------------------------------- | --------------------------------------- |
-| 安装 Python + 创建 venv             | 镜像内预装 Python 3.12                  |
-| `pip install -r requirements.txt` | `docker build` 时自动执行             |
-| 配置 nginx 反向代理                 | 不需要，直接暴露 FastAPI 端口，简单省事 |
-| 编写 systemd service 文件           | `restart: unless-stopped` 自动重启    |
-| 管理进程守护                        | 容器运行时自动守护                      |
-| 缓存目录持久化                      | `volumes` 映射到宿主机，重启不丢失    |
 
 #### 自定义端口
 
-修改 `docker-compose.yml` 中的端口映射即可：
+如果只需要 IP 访问（不需要 Caddy），可以删除 `docker-compose.yml` 中的 `caddy` 服务，然后修改 `halluciwiki` 的端口映射：
 
 ```yaml
 ports:
   - "3000:8000"   # 将宿主机 3000 端口映射到容器 8000
 ```
 
+#### 架构说明
+
+`docker-compose.yml` 包含两个服务，帮你自动处理了以下事项：
+
+| 你原本需要手动做的事 | Docker 自动处理 |
+|----------------------|----------------|
+| 安装 Python + 创建 venv | 镜像内预装 Python 3.12 |
+| `pip install -r requirements.txt` | `docker build` 时自动执行 |
+| 配置反向代理（Nginx/Caddy） | 内置 Caddy 容器，自动反向代理 |
+| 编写 systemd service 文件 | `restart: unless-stopped` 自动重启 |
+| 管理进程守护 | 容器运行时自动守护 |
+| 缓存目录持久化 | `volumes` 映射到宿主机，重启不丢失 |
+
 #### 生产环境建议
 
-如果需要在公网对外提供服务，强烈建议在应用前面加一层反向代理，用于处理 HTTPS、域名绑定、限流和安全防护。FastAPI 本身不推荐直接暴露在公网。
+项目已内置 Caddy 反向代理，无需额外配置。如需启用 HTTPS，只需：
 
-以下是三种主流方案，按推荐程度排序：
+1. 在云服务器安全组中放行 **443** 端口
+2. 将 Caddyfile 中域名的 `http://` 前缀去掉，Caddy 会自动申请 Let's Encrypt 证书
 
----
-
-##### 方案一：Caddy（最简单，推荐）
-
-[Caddy](https://caddyserver.com/) 是一个零配置、自动申请和续期 SSL 证书的反向代理服务器，非常适合个人项目。
-
-**步骤 1：创建 `Caddyfile`**
-
-在项目根目录（`docker-compose.yml` 同级）创建 `Caddyfile`：
-
-```caddy
-your-domain.com {
-    reverse_proxy localhost:8000
+```caddyfile
+你的域名 {
+    reverse_proxy halluciwiki:8000
     encode gzip
-    header {
-        X-Frame-Options "SAMEORIGIN"
-        X-Content-Type-Options "nosniff"
-        -Server
-    }
 }
 ```
-
-**步骤 2：启动 Caddy**
-
-```bash
-docker run -d \
-    --name caddy \
-    --network host \
-    -v ./Caddyfile:/etc/caddy/Caddyfile \
-    -v caddy_data:/data \
-    --restart unless-stopped \
-    caddy:latest
-```
-
-> **说明**：`--network host` 让 Caddy 容器直接使用宿主机网络，从而能通过 `localhost:8000` 访问你的应用容器。如果你的应用容器有自定义网络，请将 `localhost:8000` 替换为 `容器名:8000`。
-
-**步骤 3（可选）：将 Caddy 集成到 `docker-compose.yml`**
-
-在 `docker-compose.yml` 的 `services` 下添加：
-
-```yaml
-services:
-  halluciwiki:
-    # ... 原有的服务配置 ...
-
-  caddy:
-    image: caddy:latest
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-    restart: unless-stopped
-    depends_on:
-      - halluciwiki
-```
-
-然后将 `Caddyfile` 中的 `localhost:8000` 改为 `halluciwiki:8000`（Docker 内部网络通过服务名访问）。
-
----
-
-##### 方案二：Nginx（经典通用）
-
-Nginx 是最成熟的反向代理方案，生态丰富，适合需要精细化控制的场景。
-
-**步骤 1：创建 Nginx 配置文件**
-
-在项目根目录创建 `nginx.conf`：
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
-    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
-    location / {
-        proxy_pass http://app:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
-    }
-}
-```
-
-**步骤 2：获取 SSL 证书**
-
-推荐使用 [acme.sh](https://github.com/acmesh-official/acme.sh) 或 [Certbot](https://certbot.eff.org/) 免费申请 Let's Encrypt 证书：
-
-```bash
-# 使用 acme.sh（推荐，无需 root 权限）
-curl https://get.acme.sh | sh
-acme.sh --issue -d your-domain.com --nginx
-acme.sh --install-cert -d your-domain.com \
-    --key-file /path/to/ssl/privkey.pem \
-    --fullchain-file /path/to/ssl/fullchain.pem
-```
-
-**步骤 3：集成到 `docker-compose.yml`**
-
-```yaml
-services:
-  app:
-    # ... 原有的 app 服务配置 ...
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-      - ./ssl:/etc/nginx/ssl
-    restart: unless-stopped
-    depends_on:
-      - app
-```
-
----
-
-##### 方案三：Cloudflare Tunnel（无需公网 IP）
-
-如果你没有公网 IP 或不想开放端口，可以使用 [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 将本地服务安全地暴露到公网，且自带 HTTPS 和 DDoS 防护。
-
-**前提条件**：拥有一个托管在 Cloudflare 的域名。
-
-**步骤 1：创建 Tunnel**
-
-```bash
-# 安装 cloudflared
-# Windows: 下载 https://github.com/cloudflare/cloudflared/releases
-# Linux/macOS: 使用包管理器安装
-
-# 登录并创建隧道
-cloudflared tunnel login
-cloudflared tunnel create halluciwiki
-```
-
-**步骤 2：配置 DNS 并启动**
-
-```bash
-# 将隧道绑定到域名
-cloudflared tunnel route dns halluciwiki your-domain.com
-
-# 启动隧道（指向本地服务）
-cloudflared tunnel run --url http://localhost:8000 halluciwiki
-```
-
-**步骤 3（推荐）：作为服务长期运行**
-
-```bash
-cloudflared tunnel install --name halluciwiki
-```
-
-或在 `docker-compose.yml` 中集成：
-
-```yaml
-services:
-  app:
-    # ... 原有的 app 服务配置 ...
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-    restart: unless-stopped
-    depends_on:
-      - app
-```
-
-> Cloudflare Tunnel 的自动 HTTPS、DDoS 防护和全球 CDN 加速均为免费功能，非常适合个人项目。
-
----
-
-##### 安全加固建议
-
-无论选择哪种方案，建议额外做以下配置：
-
-| 措施                   | 说明                                                        |
-| ---------------------- | ----------------------------------------------------------- |
-| **速率限制**     | 在 Nginx/Caddy 中配置`rate limiting`，防止 API 被滥用     |
-| **IP 白名单**    | 如果仅自己使用，可限制来源 IP（Cloudflare 支持 WAF 规则）   |
-| **关闭调试模式** | 生产环境不要使用`--reload` 模式启动 uvicorn               |
-| **定期更新**     | 定期执行`docker compose pull` 更新基础镜像                |
-| **环境变量保护** | 确保`.env` 文件权限为 `600`，且不被 Git 提交            |
-| **日志监控**     | 配置`docker compose logs` 或接入 Loki/Promtail 等日志系统 |
-
-Caddy 速率限制示例（`Caddyfile`）：
-
-```caddy
-your-domain.com {
-    reverse_proxy localhost:8000
-    rate_limit {
-        zone dynamic {
-            key {remote_host}
-            events 30
-            window 1m
-        }
-    }
-}
-```
-
-Nginx 速率限制示例（`nginx.conf`）：
-
-```nginx
-limit_req_zone $binary_remote_addr zone=wiki:10m rate=10r/s;
-
-server {
-    # ...
-    location / {
-        limit_req zone=wiki burst=20 nodelay;
-        proxy_pass http://app:8000;
-    }
-}
-```
-
----
-
-> **注意**：以上配置同样适用于非 Docker 的本地部署场景，只需将 `proxy_pass`/`reverse_proxy` 的目标地址指向 `localhost:8000`（或你实际使用的端口）即可。
 
 ## API 路由一览
 
-| 路径                              | 说明                                         |
-| --------------------------------- | -------------------------------------------- |
-| `GET /`                         | 首页                                         |
-| `GET /about`                    | 关于页面                                     |
-| `GET /wiki/{title}`             | 查看/生成百科条目，支持`?image=1` 启用插图 |
-| `GET /search?q=关键词`          | 搜索页面                                     |
-| `GET /random`                   | 随机跳转到预置词库中的条目，支持`?image=1` |
-| `GET /loading?next=/wiki/xxx`   | 带加载动画的异步生成页                       |
-| `GET /api/jobs/{job_id}`        | 查询异步任务状态                             |
-| `GET /api/jobs/{job_id}/result` | 获取异步任务结果                             |
-| `GET /health`                   | 健康检查                                     |
-| `GET /image/{filename}`         | 静态插图文件服务                             |
+| 路径 | 说明 |
+|------|------|
+| `GET /` | 首页 |
+| `GET /about` | 关于页面 |
+| `GET /wiki/{title}` | 查看/生成百科条目，支持 `?image=1` 启用插图 |
+| `GET /search?q=关键词` | 搜索页面 |
+| `GET /random` | 随机跳转到预置词库中的条目，支持 `?image=1` |
+| `GET /loading?next=/wiki/xxx` | 带加载动画的异步生成页 |
+| `GET /api/jobs/{job_id}` | 查询异步任务状态 |
+| `GET /api/jobs/{job_id}/result` | 获取异步任务结果 |
+| `GET /health` | 健康检查 |
+| `GET /image/{filename}` | 静态插图文件服务 |
 
 ## 使用示例
 
 ### 直接访问条目
-
 ```
 http://localhost:8000/wiki/量子力学
 http://localhost:8000/wiki/第十三种语言
 ```
 
 ### 带插图的条目
-
 ```
 http://localhost:8000/wiki/硅基生命?image=1
 ```
 
 ### 搜索
-
 ```
 http://localhost:8000/search?q=时间旅行
 ```
 
 ### 随机条目
-
 ```
 http://localhost:8000/random
 ```
 
 ### 带加载动画的异步生成
-
 ```
 http://localhost:8000/loading?next=/wiki/火星殖民地
 ```

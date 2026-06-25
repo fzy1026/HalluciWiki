@@ -10,3 +10,17 @@ services:
       - ./wiki:/app/wiki
       - ./wiki_image:/app/wiki_image
     restart: unless-stopped
+  caddy:
+    image: caddy:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    restart: unless-stopped
+    depends_on:
+      - halluciwiki
+
+volumes:
+  caddy_data:

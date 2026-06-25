@@ -8,15 +8,15 @@ import logging
 from uuid import uuid4
 from pathlib import Path
 from contextlib import asynccontextmanager
-from urllib.parse import unquote, urlparse, parse_qs
+from urllib.parse import unquote, urlparse, parse_qs, quote
 
 import httpx
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
-from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES, AIHUBMIX_API_KEY
+from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES, AIHUBMIX_API_KEY, SHARE_TTL_SECONDS
 from prompts import GENERATE_PROMPT, SEARCH_PROMPT
 from html_validator import validate_html
 from image_generator import generate_image
@@ -36,9 +36,12 @@ CACHE_DIR = Path("wiki")
 CACHE_DIR.mkdir(exist_ok=True)
 IMAGE_CACHE_DIR = Path("wiki_image")
 IMAGE_CACHE_DIR.mkdir(exist_ok=True)
+SHARES_DIR = Path("shares")
+SHARES_DIR.mkdir(exist_ok=True)
 JOB_TTL_SECONDS = 1800
 
 JOB_STORE: dict[str, dict] = {}
+SHARE_STORE: dict[str, dict] = {}
 
 SEARCH_SUMMARY_CACHE: dict[str, tuple[str, float]] = {}
 
@@ -96,6 +99,22 @@ def cleanup_expired_images() -> int:
             continue
     if deleted:
         logger.info("图片缓存清理完成 | 删除: %d 个过期文件", deleted)
+    return deleted
+
+def cleanup_expired_shares() -> int:
+    deleted = 0
+    now = time.time()
+    for share_file in SHARES_DIR.glob("*.html"):
+        try:
+            if now - share_file.stat().st_mtime > SHARE_TTL_SECONDS:
+                share_id = share_file.stem
+                share_file.unlink()
+                SHARE_STORE.pop(share_id, None)
+                deleted += 1
+        except (FileNotFoundError, OSError):
+            continue
+    if deleted:
+        logger.info("分享快照清理完成 | 删除: %d 个过期快照", deleted)
     return deleted
 
 def sanitize_filename(title: str) -> str:
@@ -203,10 +222,12 @@ async def lifespan(app: FastAPI):
     load_templates()
     CACHE_DIR.mkdir(exist_ok=True)
     IMAGE_CACHE_DIR.mkdir(exist_ok=True)
+    SHARES_DIR.mkdir(exist_ok=True)
     cleanup_expired_cache()
     cleanup_expired_jobs()
     cleanup_expired_search_summaries()
     cleanup_expired_images()
+    cleanup_expired_shares()
 
     stop_event = asyncio.Event()
 
@@ -219,6 +240,7 @@ async def lifespan(app: FastAPI):
                 cleanup_expired_jobs()
                 cleanup_expired_search_summaries()
                 cleanup_expired_images()
+                cleanup_expired_shares()
 
     cleanup_task = asyncio.create_task(cache_cleanup_loop())
     yield
@@ -368,12 +390,14 @@ async def generate_and_review(title: str, enable_images: bool = False, job_id: s
 
     return raw_fragment
 
-def render_full_page(content_fragment: str, page_title: str = "HalluciWiki", next_url: str = "/") -> str:
+def render_full_page(content_fragment: str, page_title: str = "HalluciWiki", next_url: str = "/", share_target: str = "") -> str:
     """将内容片段插入统一布局"""
     layout = templates["layout"]
+    share_data = f' data-share-target="{share_target}"' if share_target else ""
     return (
         layout.replace("{{ title }}", page_title)
         .replace("{{ next_url }}", next_url)
+        .replace("{{ share_data }}", share_data)
         .replace("{{ content }}", content_fragment)
     )
 
@@ -404,7 +428,7 @@ async def get_wiki_page(title: str, enable_images: bool = False, job_id: str | N
             pass
 
     fragment = await generate_and_review(title, enable_images=enable_images, job_id=job_id)
-    full_html = render_full_page(fragment, page_title=f"{title} - HalluciWiki")
+    full_html = render_full_page(fragment, page_title=f"{title} - HalluciWiki", share_target=f"/wiki/{quote(title)}")
 
     cache_path.write_text(full_html, encoding="utf-8")
     if job_id:
@@ -424,7 +448,7 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
     if job_id:
         update_job(job_id, progress=85, stage="整理版式", message="正在整理搜索结果的 HTML 结构。")
 
-    html = render_full_page(fragment, page_title=f"搜索结果：{query}")
+    html = render_full_page(fragment, page_title=f"搜索结果：{query}", share_target=f"/search?q={quote(query)}")
 
     if job_id:
         update_job(job_id, progress=100, stage="完成", message="搜索结果已准备好。")
@@ -539,5 +563,82 @@ async def job_result(job_id: str):
         raise HTTPException(status_code=425, detail="任务尚未完成")
 
     return HTMLResponse(content=job["result_html"])
+
+SHARE_BANNER_HTML = '''<div style="background:linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);border:1px solid #2a3a5c;border-radius:8px;padding:0.9rem 1.1rem;margin-bottom:1.25rem;color:#c8d6e5;font-size:0.9rem;line-height:1.6;display:flex;align-items:flex-start;gap:0.75rem;">
+<div style="flex-shrink:0;font-size:1.3rem;">📡</div>
+<div>
+<div style="font-weight:700;color:#e8eef5;margin-bottom:0.15rem;">多元宇宙量子中继快照</div>
+<div>此页面内容经由跨维度量子信道传输并固定于本时间锚点。由于多元宇宙量子连接固有的退相干效应，该快照将随时间推移逐渐衰减，<strong>自生成之日起 7 天后自动消散</strong>。在此期间，内容不受主体宇宙信息流变动的影响，保持观测时刻的精确状态。</div>
+</div>
+</div>'''
+
+@app.post("/api/share")
+async def create_share(request: Request):
+    body = await request.json()
+    target_url = body.get("target_url", "")
+    if not target_url:
+        raise HTTPException(status_code=400, detail="缺少 target_url")
+
+    parsed = urlparse(target_url)
+
+    if parsed.path.startswith("/wiki/"):
+        title = unquote(parsed.path[len("/wiki/"):]) or "首页"
+        base_name = sanitize_filename(title)
+        cache_path = CACHE_DIR / base_name
+        if cache_path.exists():
+            html = cache_path.read_text(encoding="utf-8")
+        else:
+            try:
+                html = await get_wiki_page(title)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"生成页面失败: {str(e)}")
+    elif parsed.path == "/search":
+        query = parse_qs(parsed.query).get("q", [""])[0]
+        if not query:
+            raise HTTPException(status_code=400, detail="搜索关键词不能为空")
+        try:
+            html = await get_search_page(query)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"生成搜索结果失败: {str(e)}")
+    else:
+        raise HTTPException(status_code=400, detail="不支持的分享目标，仅支持 wiki 条目和搜索结果")
+
+    share_id = uuid4().hex[:8]
+    share_path = SHARES_DIR / f"{share_id}.html"
+
+    html_with_banner = html.replace(
+        '<article class="wiki-article">',
+        '<article class="wiki-article">' + SHARE_BANNER_HTML
+    )
+
+    share_path.write_text(html_with_banner, encoding="utf-8")
+    SHARE_STORE[share_id] = {
+        "share_id": share_id,
+        "target_url": target_url,
+        "created_at": time.time(),
+    }
+    logger.info("分享快照已创建 | ID: %s | 目标: %s", share_id, target_url)
+
+    return JSONResponse({
+        "share_id": share_id,
+        "share_url": f"/share/{share_id}",
+    })
+
+@app.get("/share/{share_id}", response_class=HTMLResponse)
+async def view_share(share_id: str):
+    share_path = SHARES_DIR / f"{share_id}.html"
+    if not share_path.exists():
+        raise HTTPException(status_code=404, detail="此分享链接不存在，快照可能已经消散")
+
+    age = time.time() - share_path.stat().st_mtime
+    if age > SHARE_TTL_SECONDS:
+        try:
+            share_path.unlink()
+        except OSError:
+            pass
+        SHARE_STORE.pop(share_id, None)
+        raise HTTPException(status_code=404, detail="此分享快照已超过 7 天，量子态已退相干消散")
+
+    return HTMLResponse(content=share_path.read_text(encoding="utf-8"))
 
 app.mount("/image", StaticFiles(directory="wiki_image"), name="image")

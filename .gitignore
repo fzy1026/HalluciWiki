@@ -6,6 +6,10 @@ wiki/**/*.html
 wiki_image/
 wiki_image/**
 
+# Share snapshots
+shares/
+shares/**
+
 # VS Code
 .vscode/
 

@@ -19,6 +19,9 @@ AIHUBMIX_MODELS = [m.strip() for m in os.getenv("AIHUBMIX_MODELS", "gemini-3.1-f
 # 页面缓存 TTL（秒），默认 10 分钟
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "600"))
 
+# 分享快照 TTL（秒），默认 7 天
+SHARE_TTL_SECONDS = int(os.getenv("SHARE_TTL_SECONDS", "604800"))
+
 # 随机条目词库（可自由扩充）
 RANDOM_ENTRIES = [
     "量子力学", "香蕉共和国", "1093年香蕉叛乱", "大语言模型幻觉",

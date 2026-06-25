@@ -256,6 +256,136 @@
         .img-toggle-wrap input:checked + .img-toggle-track::after {
             transform: translateX(1.05rem);
         }
+        .share-section {
+            max-width: 1040px;
+            margin: 0.75rem auto 0;
+            padding: 0 1rem;
+            display: none;
+        }
+        .share-section.visible {
+            display: block;
+        }
+        .share-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.5rem 0.85rem;
+            border: 1px solid #a2a9b1;
+            border-radius: 6px;
+            background: #f8f9fa;
+            color: #202122;
+            cursor: pointer;
+            font-size: 0.88rem;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .share-btn:hover {
+            background: #eaecf0;
+            border-color: #72777d;
+        }
+        .share-btn:active {
+            background: #dadde3;
+        }
+        .share-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+        }
+        .share-modal-overlay.active {
+            display: flex;
+        }
+        .share-modal {
+            background: #fff;
+            border: 1px solid #c8ccd1;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+            max-width: 480px;
+            width: 92%;
+            padding: 1.5rem;
+            animation: modalIn 0.2s ease;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(12px) scale(0.97); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .share-modal h3 {
+            margin: 0 0 0.6rem;
+            font-size: 1.15rem;
+        }
+        .share-modal .share-url-box {
+            display: flex;
+            gap: 0.5rem;
+            margin: 0.85rem 0;
+        }
+        .share-modal .share-url-box input {
+            flex: 1;
+            padding: 0.65rem 0.75rem;
+            border: 1px solid #a2a9b1;
+            border-radius: 6px;
+            background: #f8f9fa;
+            font-size: 0.9rem;
+            color: #202122;
+            user-select: all;
+        }
+        .share-modal .share-url-box button {
+            padding: 0.65rem 1rem;
+            border: 1px solid #2a4b8d;
+            border-radius: 6px;
+            background: linear-gradient(180deg, #3c6fd1 0%, #2a4b8d 100%);
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            white-space: nowrap;
+            font-size: 0.9rem;
+        }
+        .share-modal .share-url-box button:hover {
+            filter: brightness(1.04);
+        }
+        .share-modal .share-url-box button.copied {
+            background: #00af89;
+            border-color: #008566;
+        }
+        .share-modal .share-notice {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            border: 1px solid #2a3a5c;
+            border-radius: 8px;
+            padding: 0.75rem 0.9rem;
+            color: #c8d6e5;
+            font-size: 0.82rem;
+            line-height: 1.55;
+            margin-top: 0.85rem;
+        }
+        .share-modal .share-notice strong {
+            color: #e8eef5;
+        }
+        .share-modal .share-close {
+            display: block;
+            margin-top: 0.85rem;
+            padding: 0.45rem 0;
+            border: none;
+            background: none;
+            color: #54595d;
+            cursor: pointer;
+            font-size: 0.88rem;
+            width: 100%;
+            text-align: center;
+        }
+        .share-modal .share-close:hover {
+            color: #202122;
+        }
+        .share-modal .share-loading {
+            text-align: center;
+            padding: 1rem;
+            color: #54595d;
+        }
+        .share-modal .share-error {
+            color: #d33;
+            font-size: 0.9rem;
+            margin: 0.5rem 0;
+        }
     </style>
     <script>
         (function () {
@@ -328,6 +458,95 @@
                 goToLoading(nextUrl);
             });
         })();
+
+        (function () {
+            var article = document.querySelector('.wiki-article');
+            var shareTarget = article ? article.getAttribute('data-share-target') : '';
+            var shareSection = document.getElementById('share-section');
+            var shareBtn = document.getElementById('share-btn');
+            var overlay = document.getElementById('share-modal-overlay');
+            var loading = document.getElementById('share-loading');
+            var errorEl = document.getElementById('share-error');
+            var result = document.getElementById('share-result');
+            var urlInput = document.getElementById('share-url-input');
+            var copyBtn = document.getElementById('share-copy-btn');
+            var closeBtn = document.getElementById('share-close');
+
+            if (!shareTarget) return;
+
+            shareSection.classList.add('visible');
+
+            function openModal() {
+                overlay.classList.add('active');
+                loading.style.display = 'block';
+                errorEl.style.display = 'none';
+                result.style.display = 'none';
+                copyBtn.textContent = '复制链接';
+                copyBtn.classList.remove('copied');
+
+                fetch('/api/share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_url: shareTarget })
+                })
+                .then(function (res) {
+                    if (!res.ok) {
+                        return res.json().then(function (data) {
+                            throw new Error(data.detail || '分享失败');
+                        });
+                    }
+                    return res.json();
+                })
+                .then(function (data) {
+                    loading.style.display = 'none';
+                    result.style.display = 'block';
+                    urlInput.value = window.location.origin + data.share_url;
+                })
+                .catch(function (err) {
+                    loading.style.display = 'none';
+                    errorEl.style.display = 'block';
+                    errorEl.textContent = '锚定失败：' + err.message;
+                });
+            }
+
+            function closeModal() {
+                overlay.classList.remove('active');
+            }
+
+            shareBtn.addEventListener('click', openModal);
+            closeBtn.addEventListener('click', closeModal);
+            overlay.addEventListener('click', function (e) {
+                if (e.target === overlay) closeModal();
+            });
+
+            copyBtn.addEventListener('click', function () {
+                urlInput.select();
+                try {
+                    navigator.clipboard.writeText(urlInput.value).then(function () {
+                        copyBtn.textContent = '已复制';
+                        copyBtn.classList.add('copied');
+                        setTimeout(function () {
+                            copyBtn.textContent = '复制链接';
+                            copyBtn.classList.remove('copied');
+                        }, 2000);
+                    });
+                } catch (e) {
+                    document.execCommand('copy');
+                    copyBtn.textContent = '已复制';
+                    copyBtn.classList.add('copied');
+                    setTimeout(function () {
+                        copyBtn.textContent = '复制链接';
+                        copyBtn.classList.remove('copied');
+                    }, 2000);
+                }
+            });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && overlay.classList.contains('active')) {
+                    closeModal();
+                }
+            });
+        })();
     </script>
 </head>
 <body>
@@ -355,10 +574,31 @@
         </div>
     </header>
     <main>
-        <article class="wiki-article">
+        <article class="wiki-article"{{ share_data }}>
 {{ content }}
         </article>
+        <div class="share-section" id="share-section">
+            <button class="share-btn" id="share-btn">📡 分享此页面</button>
+        </div>
     </main>
+</div>
+<div class="share-modal-overlay" id="share-modal-overlay">
+    <div class="share-modal">
+        <h3>📡 分享此页面</h3>
+        <div class="share-loading" id="share-loading">正在通过量子信道锚定页面快照……</div>
+        <div class="share-error" id="share-error" style="display:none;"></div>
+        <div id="share-result" style="display:none;">
+            <div class="share-url-box">
+                <input type="text" id="share-url-input" readonly value="">
+                <button id="share-copy-btn">复制链接</button>
+            </div>
+            <div class="share-notice">
+                <strong>多元宇宙量子中继快照</strong><br>
+                此链接内容固定于当前时间锚点，由于跨维度量子连接的退相干效应，<strong>自生成之日起 7 天后自动消散</strong>。在此期间，内容不受主体宇宙信息流变动的影响。
+            </div>
+        </div>
+        <button class="share-close" id="share-close">关闭</button>
+    </div>
 </div>
 <footer>
     HalluciWiki

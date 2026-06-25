@@ -88,6 +88,7 @@
             const jobId = '{{ job_id }}';
             const statusUrl = `/api/jobs/${jobId}`;
             const resultUrl = '{{ result_url }}';
+            const nextUrl = '{{ next_url }}';
             const slogans = [
                 '正在连接大英图书馆网络系统',
                 '临近宇宙连接器启动中',
@@ -157,7 +158,7 @@
                         setProgress(100);
                         stageValue.textContent = '生成完成';
                         messageValue.textContent = '页面已准备好，正在打开结果。';
-                        window.location.replace(resultUrl);
+                        window.location.replace(nextUrl);
                         return;
                     }
 

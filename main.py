@@ -448,7 +448,7 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
     if job_id:
         update_job(job_id, progress=85, stage="整理版式", message="正在整理搜索结果的 HTML 结构。")
 
-    html = render_full_page(fragment, page_title=f"搜索结果：{query}", share_target=f"/search?q={quote(query)}")
+    html = render_full_page(fragment, page_title=f"搜索结果：{query}")
 
     if job_id:
         update_job(job_id, progress=100, stage="完成", message="搜索结果已准备好。")
@@ -600,8 +600,12 @@ async def create_share(request: Request):
             html = await get_search_page(query)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"生成搜索结果失败: {str(e)}")
+    elif parsed.path == "/":
+        html = render_full_page(templates["home_content"], page_title="HalluciWiki - 首页")
+    elif parsed.path == "/about":
+        html = render_full_page(templates["about_content"], page_title="关于 HalluciWiki")
     else:
-        raise HTTPException(status_code=400, detail="不支持的分享目标，仅支持 wiki 条目和搜索结果")
+        raise HTTPException(status_code=400, detail="不支持的分享目标")
 
     share_id = uuid4().hex[:8]
     share_path = SHARES_DIR / f"{share_id}.html"
@@ -609,6 +613,11 @@ async def create_share(request: Request):
     html_with_banner = html.replace(
         '<article class="wiki-article">',
         '<article class="wiki-article">' + SHARE_BANNER_HTML
+    )
+    html_with_banner = re.sub(
+        r'\s+data-share-target="[^"]*"',
+        '',
+        html_with_banner
     )
 
     share_path.write_text(html_with_banner, encoding="utf-8")

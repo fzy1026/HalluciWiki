@@ -460,6 +460,7 @@
         })();
 
         (function () {
+            document.addEventListener('DOMContentLoaded', function () {
             var article = document.querySelector('.wiki-article');
             var shareTarget = article ? article.getAttribute('data-share-target') : '';
             var shareSection = document.getElementById('share-section');
@@ -472,9 +473,9 @@
             var copyBtn = document.getElementById('share-copy-btn');
             var closeBtn = document.getElementById('share-close');
 
-            if (!shareTarget) return;
-
-            shareSection.classList.add('visible');
+            if (shareTarget && shareTarget.startsWith('/wiki/')) {
+                shareSection.classList.add('visible');
+            }
 
             function openModal() {
                 overlay.classList.add('active');
@@ -545,6 +546,7 @@
                 if (e.key === 'Escape' && overlay.classList.contains('active')) {
                     closeModal();
                 }
+            });
             });
         })();
     </script>

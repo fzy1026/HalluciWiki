@@ -17,15 +17,15 @@
 
 ## 技术栈
 
-| 组件 | 技术 |
-|------|------|
-| Web 框架 | [FastAPI](https://fastapi.tiangolo.com/) |
-| 服务器 | [Uvicorn](https://www.uvicorn.org/) |
+| 组件        | 技术                                       |
+| ----------- | ------------------------------------------ |
+| Web 框架    | [FastAPI](https://fastapi.tiangolo.com/)      |
+| 服务器      | [Uvicorn](https://www.uvicorn.org/)           |
 | HTTP 客户端 | [httpx](https://www.python-httpx.org/) (异步) |
-| 文本生成 | DeepSeek API (OpenAI 兼容) |
-| 图片生成 | AIHubMix API (可选) |
-| 环境管理 | python-dotenv |
-| 图片处理 | Pillow |
+| 文本生成    | DeepSeek API (OpenAI 兼容)                 |
+| 图片生成    | AIHubMix API (可选)                        |
+| 环境管理    | python-dotenv                              |
+| 图片处理    | Pillow                                     |
 
 ## 项目结构
 
@@ -73,12 +73,14 @@ cd wiki
 ### 2. 创建虚拟环境
 
 **Windows (PowerShell):**
+
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
 **macOS / Linux:**
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -123,14 +125,14 @@ DEEPSEEK_MODEL=deepseek-chat
 
 文本生成使用的是 OpenAI 兼容的 `/v1/chat/completions` 接口，因此任何兼容 OpenAI 协议的 API 都可以直接替换，只需修改 `.env` 中的三个变量即可，**无需改动任何代码**：
 
-| 服务商 | DEEPSEEK_BASE_URL | DEEPSEEK_MODEL |
-|--------|-------------------|----------------|
-| DeepSeek（默认） | `https://api.deepseek.com` | `deepseek-chat` |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o` / `gpt-3.5-turbo` |
-| 通义千问（阿里云） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
-| Moonshot（月之暗面） | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
-| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4` |
-| 其他 OpenAI 兼容代理 | 填写对应地址 | 填写对应模型名 |
+| 服务商               | DEEPSEEK_BASE_URL                                     | DEEPSEEK_MODEL                 |
+| -------------------- | ----------------------------------------------------- | ------------------------------ |
+| DeepSeek（默认）     | `https://api.deepseek.com`                          | `deepseek-chat`              |
+| OpenAI               | `https://api.openai.com/v1`                         | `gpt-4o` / `gpt-3.5-turbo` |
+| 通义千问（阿里云）   | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`                  |
+| Moonshot（月之暗面） | `https://api.moonshot.cn/v1`                        | `moonshot-v1-8k`             |
+| 智谱 GLM             | `https://open.bigmodel.cn/api/paas/v4`              | `glm-4`                      |
+| 其他 OpenAI 兼容代理 | 填写对应地址                                          | 填写对应模型名                 |
 
 示例——改用 OpenAI：
 
@@ -264,14 +266,14 @@ docker compose up -d --build  # 重新构建并启动（代码更新后）
 
 `docker-compose.yml` 帮你自动处理了以下事项，无需再手动折腾：
 
-| 你原本需要手动做的事 | Docker 自动处理 |
-|----------------------|----------------|
-| 安装 Python + 创建 venv | 镜像内预装 Python 3.12 |
-| `pip install -r requirements.txt` | `docker build` 时自动执行 |
-| 配置 nginx 反向代理 | 不需要，直接暴露 FastAPI 端口，简单省事 |
-| 编写 systemd service 文件 | `restart: unless-stopped` 自动重启 |
-| 管理进程守护 | 容器运行时自动守护 |
-| 缓存目录持久化 | `volumes` 映射到宿主机，重启不丢失 |
+| 你原本需要手动做的事                | Docker 自动处理                         |
+| ----------------------------------- | --------------------------------------- |
+| 安装 Python + 创建 venv             | 镜像内预装 Python 3.12                  |
+| `pip install -r requirements.txt` | `docker build` 时自动执行             |
+| 配置 nginx 反向代理                 | 不需要，直接暴露 FastAPI 端口，简单省事 |
+| 编写 systemd service 文件           | `restart: unless-stopped` 自动重启    |
+| 管理进程守护                        | 容器运行时自动守护                      |
+| 缓存目录持久化                      | `volumes` 映射到宿主机，重启不丢失    |
 
 #### 自定义端口
 
@@ -330,8 +332,8 @@ docker run -d \
 
 ```yaml
 services:
-  app:
-    # ... 原有的 app 服务配置 ...
+  halluciwiki:
+    # ... 原有的服务配置 ...
 
   caddy:
     image: caddy:latest
@@ -343,10 +345,10 @@ services:
       - caddy_data:/data
     restart: unless-stopped
     depends_on:
-      - app
+      - halluciwiki
 ```
 
-然后将 `Caddyfile` 中的 `localhost:8000` 改为 `app:8000`（Docker 内部网络通过服务名访问）。
+然后将 `Caddyfile` 中的 `localhost:8000` 改为 `halluciwiki:8000`（Docker 内部网络通过服务名访问）。
 
 ---
 
@@ -481,14 +483,14 @@ services:
 
 无论选择哪种方案，建议额外做以下配置：
 
-| 措施 | 说明 |
-|------|------|
-| **速率限制** | 在 Nginx/Caddy 中配置 `rate limiting`，防止 API 被滥用 |
-| **IP 白名单** | 如果仅自己使用，可限制来源 IP（Cloudflare 支持 WAF 规则） |
-| **关闭调试模式** | 生产环境不要使用 `--reload` 模式启动 uvicorn |
-| **定期更新** | 定期执行 `docker compose pull` 更新基础镜像 |
-| **环境变量保护** | 确保 `.env` 文件权限为 `600`，且不被 Git 提交 |
-| **日志监控** | 配置 `docker compose logs` 或接入 Loki/Promtail 等日志系统 |
+| 措施                   | 说明                                                        |
+| ---------------------- | ----------------------------------------------------------- |
+| **速率限制**     | 在 Nginx/Caddy 中配置`rate limiting`，防止 API 被滥用     |
+| **IP 白名单**    | 如果仅自己使用，可限制来源 IP（Cloudflare 支持 WAF 规则）   |
+| **关闭调试模式** | 生产环境不要使用`--reload` 模式启动 uvicorn               |
+| **定期更新**     | 定期执行`docker compose pull` 更新基础镜像                |
+| **环境变量保护** | 确保`.env` 文件权限为 `600`，且不被 Git 提交            |
+| **日志监控**     | 配置`docker compose logs` 或接入 Loki/Promtail 等日志系统 |
 
 Caddy 速率限制示例（`Caddyfile`）：
 
@@ -525,43 +527,48 @@ server {
 
 ## API 路由一览
 
-| 路径 | 说明 |
-|------|------|
-| `GET /` | 首页 |
-| `GET /about` | 关于页面 |
-| `GET /wiki/{title}` | 查看/生成百科条目，支持 `?image=1` 启用插图 |
-| `GET /search?q=关键词` | 搜索页面 |
-| `GET /random` | 随机跳转到预置词库中的条目，支持 `?image=1` |
-| `GET /loading?next=/wiki/xxx` | 带加载动画的异步生成页 |
-| `GET /api/jobs/{job_id}` | 查询异步任务状态 |
-| `GET /api/jobs/{job_id}/result` | 获取异步任务结果 |
-| `GET /health` | 健康检查 |
-| `GET /image/{filename}` | 静态插图文件服务 |
+| 路径                              | 说明                                         |
+| --------------------------------- | -------------------------------------------- |
+| `GET /`                         | 首页                                         |
+| `GET /about`                    | 关于页面                                     |
+| `GET /wiki/{title}`             | 查看/生成百科条目，支持`?image=1` 启用插图 |
+| `GET /search?q=关键词`          | 搜索页面                                     |
+| `GET /random`                   | 随机跳转到预置词库中的条目，支持`?image=1` |
+| `GET /loading?next=/wiki/xxx`   | 带加载动画的异步生成页                       |
+| `GET /api/jobs/{job_id}`        | 查询异步任务状态                             |
+| `GET /api/jobs/{job_id}/result` | 获取异步任务结果                             |
+| `GET /health`                   | 健康检查                                     |
+| `GET /image/{filename}`         | 静态插图文件服务                             |
 
 ## 使用示例
 
 ### 直接访问条目
+
 ```
 http://localhost:8000/wiki/量子力学
 http://localhost:8000/wiki/第十三种语言
 ```
 
 ### 带插图的条目
+
 ```
 http://localhost:8000/wiki/硅基生命?image=1
 ```
 
 ### 搜索
+
 ```
 http://localhost:8000/search?q=时间旅行
 ```
 
 ### 随机条目
+
 ```
 http://localhost:8000/random
 ```
 
 ### 带加载动画的异步生成
+
 ```
 http://localhost:8000/loading?next=/wiki/火星殖民地
 ```

@@ -9,6 +9,7 @@ from uuid import uuid4
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import unquote, urlparse, parse_qs, quote
+from html import escape
 
 import httpx
 from fastapi import FastAPI, Query, HTTPException, Request
@@ -17,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES, AIHUBMIX_API_KEY, SHARE_TTL_SECONDS
-from prompts import GENERATE_PROMPT, SEARCH_PROMPT
+from prompts import GENERATE_PROMPT, SEARCH_PROMPT, SUMMARY_PROMPT
 from html_validator import validate_html
 from image_generator import generate_image
 import providers
@@ -27,6 +28,11 @@ import caches
 # 正文最少字数：低于这个值视为模型输出不合格，自动换下一个模型
 MIN_ARTICLE_CHARS = int(os.getenv("MIN_ARTICLE_CHARS", "1200"))
 MIN_SEARCH_CHARS = int(os.getenv("MIN_SEARCH_CHARS", "200"))
+
+# B 函数（摘要）并发上限与单页最多补几条
+SUMMARY_CONCURRENCY = int(os.getenv("SUMMARY_CONCURRENCY", "4"))
+SUMMARY_MAX_RESULTS = int(os.getenv("SUMMARY_MAX_RESULTS", "10"))
+_summary_semaphore = asyncio.Semaphore(SUMMARY_CONCURRENCY)
 
 load_dotenv()
 
@@ -345,6 +351,96 @@ async def call_llm(prompt: str, *, purpose: str = "wiki", min_chars: int = 0) ->
     logger.info("生成完成 | %s/%s | %d 字", model.id, model.model, len(content))
     return content
 
+
+def clean_summary(text: str) -> str:
+    """把模型吐的摘要洗成一行纯文本。"""
+    t = re.sub(r"<[^>]+>", "", text or "")
+    t = t.replace("```", "").strip()
+    t = t.strip("\"'“”‘’「」《》 ").strip()
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"^(摘要|简述|简介)\s*[:：]\s*", "", t)
+    return t[:120].strip()
+
+
+async def generate_summary(title: str, context: str = "") -> str:
+    """B 函数：条目名 → 一句话摘要。先查 B 层缓存，未命中才调模型。"""
+    cached = caches.summary_get(title)
+    if cached:
+        return cached
+
+    context_block = f"上下文：{context}\n" if context else ""
+    prompt = SUMMARY_PROMPT.format(title=title, context_block=context_block)
+    try:
+        async with _summary_semaphore:
+            raw = await call_llm(prompt, purpose="summary", min_chars=6)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("摘要生成失败 | %s | %s", title, exc)
+        return ""
+
+    text = clean_summary(raw)
+    if text:
+        caches.summary_set(title, text)
+        caches.flush()
+    return text
+
+
+SEARCH_LI = re.compile(r"<li[^>]*>(.*?)</li>", re.S | re.I)
+SEARCH_LINK = re.compile(r'<a\s+[^>]*href="/wiki/([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
+
+
+def _plain(html_text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html_text or "")).strip()
+
+
+async def polish_search_fragment(query: str, fragment: str, summaries: dict[str, str]) -> str:
+    """把模型给的搜索结果，重排成本地统一结构；缺摘要的条目用 B 函数补齐。"""
+    items: list[dict] = []
+    for li_html in SEARCH_LI.findall(fragment):
+        match = SEARCH_LINK.search(li_html)
+        if not match:
+            continue
+        title = unquote(match.group(1)).strip()
+        if not title:
+            continue
+        snippet = _plain(li_html[match.end():])
+        summary = summaries.get(title) or snippet
+        items.append({
+            "title": title,
+            "summary": summary,
+            "need": len(summary) < 8,
+        })
+
+    if not items:
+        return fragment
+
+    items = items[:SUMMARY_MAX_RESULTS]
+
+    pending = [it for it in items if it["need"]]
+    if pending:
+        logger.info("搜索结果摘要缺失 %d 条，调用 B 函数补齐 | %s", len(pending), query)
+        generated = await asyncio.gather(
+            *(generate_summary(it["title"], query) for it in pending),
+            return_exceptions=True,
+        )
+        for it, text in zip(pending, generated):
+            if isinstance(text, str) and text:
+                it["summary"] = text
+                it["need"] = False
+
+    rows = []
+    for it in items:
+        title = escape(it["title"])
+        summary = escape(it["summary"] or "该条目暂无摘要。")
+        path = quote(it["title"])
+        rows.append(
+            '<li>'
+            f'<a href="/wiki/{path}" data-summary="{summary}">{title}</a>'
+            f'<span class="result-snippet">{summary}</span>'
+            f'<span class="result-url">wiki.chamdev.site › wiki › {title}</span>'
+            '</li>'
+        )
+    return '<ul class="search-result-list">' + "".join(rows) + "</ul>"
+
 async def generate_and_review(title: str, enable_images: bool = False, job_id: str | None = None, link_summary: str = "") -> str:
     """构建正文片段 → HTML 格式校验 → 返回片段"""
     if job_id:
@@ -356,7 +452,10 @@ async def generate_and_review(title: str, enable_images: bool = False, job_id: s
     elif search_summary:
         summary_text = search_summary
     else:
-        summary_text = "（无特别约束，自由发挥）"
+        # 既没有外部传入、也不是从搜索结果点进来的（比如 /random 或直接输 URL），
+        # 就让 B 函数补一个摘要，保证虚构宇宙的口径一致
+        generated = await generate_summary(title)
+        summary_text = generated if generated else "（无特别约束，自由发挥）"
 
     image_instruction = (
         "- 在适当位置插入插图占位符，格式为 [IMAGE: 图片描述]。例如 [IMAGE: 一幅展示量子纠缠原理的示意图，包含两个纠缠粒子之间的连接线]。每个条目建议插入 1-2 个插图占位符，描述应具体、可视化，便于生成准确的图片。占位符应放在相关段落之后，独立成行。"
@@ -466,10 +565,20 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
     summaries = extract_search_summaries(fragment)
     store_search_summaries(summaries)
 
+    # 重排成本地统一结构：缺摘要的条目用 B 函数补齐，避免糊成一团
+    fragment = await polish_search_fragment(query, fragment, summaries)
+
     if job_id:
         update_job(job_id, progress=85, stage="整理版式", message="正在整理搜索结果的 HTML 结构。")
 
-    html = render_full_page(fragment, page_title=f"搜索结果：{query}")
+    body = (
+        '<div class="search-results">'
+        f'<div class="article-meta"><span class="article-badge">搜索</span>'
+        f'<span>{escape(query)}</span></div>'
+        f'{fragment}'
+        '</div>'
+    )
+    html = render_full_page(body, page_title=f"搜索结果：{query}")
     caches.search_set(query, html)
 
     if job_id:

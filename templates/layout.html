@@ -176,6 +176,49 @@
             border-top: 1px solid var(--border-soft);
             margin: 1.2rem 0;
         }
+
+        /* ---- 搜索结果列表：每条独立成卡片，避免糊成一团 ---- */
+        article.wiki-article .search-results ul,
+        article.wiki-article .search-results ol {
+            margin: 0.4rem 0 0 0;
+            padding: 0;
+            list-style: none;
+        }
+        article.wiki-article .search-results li {
+            margin: 0 0 0.6rem;
+            padding: 0.85rem 1rem;
+            background: #fff;
+            border: 1px solid var(--border-soft);
+            border-radius: 6px;
+            line-height: 1.7;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        article.wiki-article .search-results li:hover {
+            border-color: #c8d7ee;
+            box-shadow: 0 2px 8px rgba(51, 102, 204, .07);
+        }
+        article.wiki-article .search-results li a {
+            font-size: 1.06rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        article.wiki-article .search-results li a:hover {
+            text-decoration: underline;
+        }
+        article.wiki-article .search-results .result-snippet {
+            display: block;
+            margin-top: 0.3rem;
+            color: #54595d;
+            font-size: 0.93rem;
+        }
+        article.wiki-article .search-results .result-url {
+            display: block;
+            margin-top: 0.25rem;
+            color: #2f6b2f;
+            font-size: 0.8rem;
+            font-family: ui-monospace, Consolas, monospace;
+        }
+
         .article-meta {
             display: flex;
             flex-wrap: wrap;

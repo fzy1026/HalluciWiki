@@ -59,6 +59,104 @@ def _latency(ms: int | None) -> str:
     return f'<span style="color:{color};">{ms} ms</span>'
 
 
+def _btn(task: str, op: str, key: str, text: str, title: str = "") -> str:
+    tip = f' title="{_e(title)}"' if title else ""
+    return (
+        f'<form method="post" action="/admin/routing" style="margin:0;display:inline;">'
+        f'<input type="hidden" name="task" value="{_e(task)}">'
+        f'<input type="hidden" name="op" value="{_e(op)}">'
+        f'<input type="hidden" name="key" value="{_e(key)}">'
+        f'<button class="mp-mini" type="submit"{tip}>{text}</button></form>'
+    )
+
+
+def _routing_panel(data: dict) -> str:
+    routing = data.get("routing") or {}
+    tasks = routing.get("tasks") or {}
+    labels = routing.get("labels") or {}
+    tstats = routing.get("stats") or {}
+    rows = data.get("rows") or []
+    name_of = {r["key_id"]: f'{r["name"]} · {r["model"]}' for r in rows}
+    all_keys = [r["key_id"] for r in rows if r["state"] != "disabled"]
+
+    cards = []
+    for task in ("search", "summary", "page"):
+        keys = tasks.get(task) or []
+        label = labels.get(task, task)
+
+        items = []
+        if keys:
+            for i, k in enumerate(keys, start=1):
+                items.append(
+                    '<div style="display:flex;align-items:center;gap:5px;padding:3px 0;">'
+                    f'<span style="color:#a2a9b1;font-size:12px;width:16px;">{i}</span>'
+                    f'<span style="font-size:13px;flex:1;">{_e(name_of.get(k, k))}</span>'
+                    f'{_btn(task, "up", k, "↑", "优先")}'
+                    f'{_btn(task, "down", k, "↓", "靠后")}'
+                    f'{_btn(task, "remove", k, "✕", "移除")}'
+                    '</div>'
+                )
+        else:
+            items.append(
+                '<div style="color:#72777d;font-size:13px;padding:4px 0;line-height:1.6;">'
+                '不限 —— 按 models.json 顺序使用全部模型</div>'
+            )
+
+        options = "".join(
+            f'<option value="{_e(k)}">{_e(name_of.get(k, k))}</option>'
+            for k in all_keys if k not in keys
+        )
+        add_form = (
+            '<form method="post" action="/admin/routing" style="display:flex;gap:6px;margin-top:8px;'
+            'flex-wrap:wrap;align-items:center;">'
+            f'<input type="hidden" name="task" value="{_e(task)}">'
+            '<input type="hidden" name="op" value="add">'
+            f'<select name="key" style="flex:1 1 120px;min-width:0;max-width:100%;font-size:12px;'
+            f'padding:4px 6px;border:1px solid #c8ccd1;border-radius:4px;">{options}</select>'
+            '<button class="mp-mini" type="submit" style="flex:0 0 auto;">＋ 加入</button>'
+            '</form>'
+        ) if options else ""
+
+        clear = _btn(task, "clear", "", "清空（恢复不限）") if keys else ""
+
+        st = tstats.get(task) or {}
+        last = ""
+        if st.get("last_model"):
+            last = (f'<div style="color:#72777d;font-size:11px;margin-top:6px;">'
+                    f'最近成功 {_e(name_of.get(st["last_model"], st["last_model"]))}'
+                    f' · {_ts(st.get("last_at"))}</div>')
+        counters = f'<div style="color:#a2a9b1;font-size:11px;">成功 {st.get("ok", 0)} / 失败 {st.get("fail", 0)}</div>'
+
+        cards.append(
+            '<div style="flex:1 1 300px;min-width:0;border:1px solid #eaecf0;border-radius:6px;'
+            'padding:12px 14px;background:#fcfdff;box-sizing:border-box;">'
+            f'<div style="font-weight:700;font-size:14px;margin-bottom:6px;color:#202122;">{_e(label)}</div>'
+            f'{"".join(items)}{add_form}'
+            f'<div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+            f'{counters}{clear}</div>{last}</div>'
+        )
+
+    warn = ""
+    if routing.get("error"):
+        warn = (f'<div style="background:#fee7e6;border:1px solid #f5c2c0;border-radius:6px;'
+                f'padding:8px 12px;margin-top:8px;color:#b32424;font-size:12px;">'
+                f'routing.json 读取失败：{_e(routing["error"])}</div>')
+    for w in (routing.get("warnings") or [])[:4]:
+        warn += (f'<div style="background:#fef6e7;border:1px solid #f5deb3;border-radius:6px;'
+                 f'padding:8px 12px;margin-top:6px;color:#8a5300;font-size:12px;">{_e(w)}</div>')
+
+    return f"""
+<h2 style="margin-top:26px;">模型分工</h2>
+<p style="color:#54595d;font-size:13px;margin:0 0 12px;">
+每个任务用哪些模型、谁先谁后，在这里直接点就能改，保存即生效（写入 routing.json，热加载）。
+顺序 = 优先级，第一个挂了自动换下一个；「不限」表示按 models.json 的顺序用全部模型。
+摘要 B 用快模型、页面 C 用大模型，是最常见的配法。
+</p>
+<div style="display:flex;flex-wrap:wrap;gap:12px;">{''.join(cards)}</div>
+{warn}
+"""
+
+
 def render(data: dict) -> str:
     ov = data["overview"]
     rows = data["rows"]
@@ -144,6 +242,9 @@ def render(data: dict) -> str:
             text-decoration:none; }}
   .mp-btn.ghost {{ background:#fff; color:#3366cc; }}
   .mp-btn:hover {{ opacity:.88; }}
+  .mp-mini {{ padding:2px 7px; border-radius:4px; border:1px solid #c8ccd1; background:#fff;
+              color:#3366cc; font-size:12px; cursor:pointer; line-height:1.5; }}
+  .mp-mini:hover {{ border-color:#3366cc; background:#f5f9ff; }}
   .mp-table {{ width:100%; min-width:1560px; border-collapse:collapse; font-size:13px; background:#fff;
                border:1px solid #c8ccd1; border-radius:6px; overflow:hidden; }}
   .mp-table th {{ background:#f8f9fa; color:#54595d; font-size:12px; font-weight:700;
@@ -166,7 +267,9 @@ def render(data: dict) -> str:
 
 {warn}
 
-<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px;">
+{_routing_panel(data)}
+
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:22px 0 14px;">
   <form method="post" action="/admin/probe" style="margin:0;">
     <button class="mp-btn" type="submit">检测全部</button>
   </form>

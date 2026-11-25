@@ -49,6 +49,7 @@ from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 logger = logging.getLogger("providers")
 
 MODELS_FILE = os.getenv("MODELS_FILE", "/app/models.json")
+ROUTING_FILE = os.getenv("ROUTING_FILE", "/app/routing.json")
 COOLDOWN_SECONDS = int(os.getenv("LLM_COOLDOWN_SECONDS", "60"))
 BAD_KEY_COOLDOWN_SECONDS = int(os.getenv("LLM_BAD_KEY_COOLDOWN_SECONDS", "1800"))
 PROBE_TIMEOUT = float(os.getenv("LLM_PROBE_TIMEOUT", "20"))
@@ -142,6 +143,17 @@ _STATS: dict[str, Stats] = {}
 _mtime: float = -1.0
 _load_error: str = ""
 _probe_lock = asyncio.Lock()
+
+# ---- 任务路由：task → 模型 key 有序列表 -------------------------------------
+# tasks 为空列表 / 缺失 = 不限制，按 models.json 顺序用全部模型
+TASKS = ("search", "summary", "page")
+TASK_LABELS = {"search": "搜索 A", "summary": "摘要 B", "page": "页面 C"}
+
+_ROUTING: dict[str, list[str]] = {}
+_routing_mtime: float = -1.0
+_routing_error: str = ""
+_routing_warnings: list[str] = []
+_TASK_STATS: dict[str, dict] = {}
 
 
 def stats_of(m: Model) -> Stats:
@@ -244,14 +256,125 @@ def models() -> list[Model]:
     return _MODELS
 
 
-def candidates(now: float | None = None) -> list[Model]:
-    """可用优先、冷却中的按解冻时间排在后面（全冷却时也能兜底硬试一次）。"""
+def reload_routing(force: bool = False) -> None:
+    """routing.json 变化时重新加载。格式：
+    {"tasks": {"search": {"models": ["id:model", ...]}, ...}}
+    列表为空 = 该任务不限制，按 models.json 顺序用全部模型。
+    """
+    global _ROUTING, _routing_mtime, _routing_error, _routing_warnings
+    try:
+        mtime = os.path.getmtime(ROUTING_FILE)
+    except OSError:
+        mtime = 0.0
+    if not force and mtime == _routing_mtime:
+        return
+    _routing_mtime = mtime
+
+    if not mtime:
+        _ROUTING = {}
+        _routing_error = ""
+        _routing_warnings = []
+        return
+
+    try:
+        with open(ROUTING_FILE, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        _routing_error = f"{type(exc).__name__}: {exc}"
+        logger.error("routing.json 读取失败，沿用上一份路由: %s", _routing_error)
+        return
+
+    tasks = payload.get("tasks") if isinstance(payload, dict) else {}
+    known = {m.key for m in _MODELS}
+    parsed: dict[str, list[str]] = {}
+    warnings: list[str] = []
+    for name in TASKS:
+        entry = tasks.get(name) or {}
+        keys = entry.get("models") if isinstance(entry, dict) else entry
+        if not isinstance(keys, list):
+            keys = []
+        clean: list[str] = []
+        for key in keys:
+            key = str(key).strip()
+            if not key:
+                continue
+            if key not in known:
+                warnings.append(f"{TASK_LABELS[name]}：配置里的 {key} 不在 models.json 中，已忽略")
+                continue
+            if key not in clean:
+                clean.append(key)
+        parsed[name] = clean
+
+    _ROUTING = parsed
+    _routing_error = ""
+    _routing_warnings = warnings
+    logger.info("模型分工已加载 | %s",
+                " / ".join(f"{TASK_LABELS[t]}:{len(parsed.get(t) or []) or '全部'}" for t in TASKS))
+
+
+def routing_for(task: str | None) -> list[str] | None:
+    reload_routing()
+    if not task:
+        return None
+    keys = _ROUTING.get(task) or []
+    return keys or None
+
+
+def routing_snapshot() -> dict:
+    reload_routing()
+    return {
+        "tasks": {t: list(_ROUTING.get(t) or []) for t in TASKS},
+        "labels": TASK_LABELS,
+        "stats": _TASK_STATS,
+        "error": _routing_error,
+        "warnings": _routing_warnings,
+        "file": ROUTING_FILE,
+    }
+
+
+def save_routing(tasks: dict[str, list[str]]) -> None:
+    """写回 routing.json（原地写，避免 bind-mount 下 rename 失败）。"""
+    global _routing_mtime
+    payload = {
+        "version": 1,
+        "_comment": "任务 → 模型（有序，前者优先）。列表为空 = 该任务不限，按 models.json 顺序使用全部模型。",
+        "tasks": {t: {"models": [str(k) for k in tasks.get(t) or []]} for t in TASKS},
+    }
+    with open(ROUTING_FILE, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    logger.info("模型分工已保存 | %s", payload["tasks"])
+    reload_routing(force=True)
+
+
+def _models_for(task: str | None) -> list[Model]:
+    pool = routing_for(task)
+    enabled = [m for m in _MODELS if m.enabled]
+    if not pool:
+        return enabled
+    by_key = {m.key: m for m in enabled}
+    picked = [by_key[k] for k in pool if k in by_key]
+    if not picked:
+        # 配置漂移（比如模型被改名/删掉）时不能让站点直接死掉，退回全部模型
+        return enabled
+    return picked
+
+
+def candidates(now: float | None = None, task: str | None = None) -> list[Model]:
+    """该任务可用的模型：没冷却的在前，冷却中的按解冻时间排在后面兜底。"""
     now = now or time.time()
-    usable = [m for m in _MODELS if m.enabled]
+    usable = _models_for(task)
     ready = [m for m in usable if stats_of(m).cooldown_until <= now]
     cooling = sorted([m for m in usable if stats_of(m).cooldown_until > now],
                      key=lambda m: stats_of(m).cooldown_until)
     return ready + cooling
+
+
+def _task_stat(task: str) -> dict:
+    st = _TASK_STATS.get(task)
+    if st is None:
+        st = {"ok": 0, "fail": 0, "last_model": "", "last_at": 0.0, "last_ms": 0}
+        _TASK_STATS[task] = st
+    return st
 
 
 class AllModelsFailed(Exception):
@@ -299,13 +422,14 @@ async def chat(
     client: httpx.AsyncClient,
     prompt: str,
     *,
-    purpose: str = "wiki",
+    task: str = "page",
     min_chars: int = 0,
     max_tokens: int | None = None,
 ) -> tuple[str, Model]:
-    """按顺序尝试各模型，返回 (正文, 命中的模型)。全部失败抛 AllModelsFailed。"""
+    """按该任务配置的模型顺序尝试，返回 (正文, 命中的模型)。全部失败抛 AllModelsFailed。"""
     reload()
-    order = candidates()
+    reload_routing()
+    order = candidates(task=task)
     if not order:
         raise AllModelsFailed("没有任何可用模型，请检查 models.json")
 
@@ -386,10 +510,17 @@ async def chat(
 
         _ok(m, st, latency_ms=latency, http=resp.status_code, chars=len(content),
             finish=finish, echo=echo)
-        logger.info("模型出稿成功 | %s/%s | %d 字 | %dms | %s",
-                    m.id, m.model, len(content), latency, purpose)
+        tst = _task_stat(task)
+        tst["ok"] += 1
+        tst["last_model"] = m.key
+        tst["last_at"] = time.time()
+        tst["last_ms"] = latency
+        logger.info("模型出稿成功 | %s/%s | %d 字 | %dms | 任务:%s",
+                    m.id, m.model, len(content), latency, task)
         return content, m
 
+    tst = _task_stat(task)
+    tst["fail"] += 1
     detail = "；".join(errors[:4]) if errors else "没有已配置密钥的模型"
     raise AllModelsFailed(detail)
 
@@ -530,6 +661,7 @@ def snapshot() -> dict:
     calls = sum(r["success"] + r["failure"] for r in rows)
     return {
         "rows": rows,
+        "routing": routing_snapshot(),
         "overview": {
             "total": len(rows),
             "usable": usable,
@@ -547,3 +679,4 @@ def snapshot() -> dict:
 
 
 reload(force=True)
+reload_routing(force=True)

@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse, parse_qs, quote
 from html import escape
 
 import httpx
-from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi import FastAPI, Query, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -340,10 +340,11 @@ async def process_image_placeholders(html: str) -> str:
     return result
 
 async def call_llm(prompt: str, *, purpose: str = "wiki", min_chars: int = 0) -> str:
-    """按 models.json 的顺序轮询模型；一个失败自动换下一个，全挂才报错。"""
+    """按 routing.json 的分工，用该任务配置的模型顺序轮询；一个失败自动换下一个。"""
+    task = "page" if purpose == "wiki" else purpose
     try:
         content, model = await providers.chat(
-            async_client, prompt, purpose=purpose, min_chars=min_chars
+            async_client, prompt, task=task, min_chars=min_chars
         )
     except providers.AllModelsFailed as exc:
         logger.error("所有模型均不可用 | %s", exc)
@@ -695,6 +696,40 @@ async def admin_probe(key: str | None = None):
     else:
         await providers.probe_all()
         logger.info("手动检测全部模型")
+    return RedirectResponse("/admin", status_code=303)
+
+
+@app.post("/admin/routing")
+async def admin_routing(task: str = Form(...), op: str = Form(...), key: str = Form("")):
+    """模型分工的即时调整：up / down / remove / add / clear。"""
+    if task not in providers.TASKS:
+        raise HTTPException(status_code=400, detail="未知任务")
+
+    current = {t: list(providers.routing_for(t) or []) for t in providers.TASKS}
+    seq = current[task]
+
+    if op == "add" and key and key not in seq:
+        seq.append(key)
+    elif op == "remove" and key in seq:
+        seq.remove(key)
+    elif op == "up" and key in seq:
+        i = seq.index(key)
+        if i > 0:
+            seq[i - 1], seq[i] = seq[i], seq[i - 1]
+    elif op == "down" and key in seq:
+        i = seq.index(key)
+        if i < len(seq) - 1:
+            seq[i + 1], seq[i] = seq[i], seq[i + 1]
+    elif op == "clear":
+        seq = []
+
+    current[task] = seq
+    try:
+        providers.save_routing(current)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"写入 routing.json 失败：{exc}") from exc
+
+    logger.info("模型分工调整 | %s | %s %s -> %s", task, op, key or "-", seq)
     return RedirectResponse("/admin", status_code=303)
 
 @app.get("/api/jobs/{job_id}")

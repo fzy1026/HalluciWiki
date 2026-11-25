@@ -353,13 +353,22 @@ async def call_llm(prompt: str, *, purpose: str = "wiki", min_chars: int = 0) ->
     return content
 
 
-def clean_summary(text: str) -> str:
-    """把模型吐的摘要洗成一行纯文本。"""
+def clean_summary(text: str, title: str = "") -> str:
+    """把模型吐的摘要洗成一行纯文本。小模型常见毛病：带「摘要：」前缀、重复标题、写多段。"""
     t = re.sub(r"<[^>]+>", "", text or "")
     t = t.replace("```", "").strip()
-    t = t.strip("\"'“”‘’「」《》 ").strip()
+    t = re.sub(r"^(摘要|简述|简介|条目)\s*[:：]\s*", "", t)
+    if title:
+        for sep in ("：", ":", "——", "—", "，", " "):
+            if t.startswith(title + sep):
+                t = t[len(title) + len(sep):]
+                break
+    t = t.strip().strip("\"'“”‘’「」《》 ")
+    t = re.sub(r"^[\s：:，,、\-—–.。]+", "", t)
     t = re.sub(r"\s+", " ", t)
-    t = re.sub(r"^(摘要|简述|简介)\s*[:：]\s*", "", t)
+    first = re.match(r"^(.{8,70}?[。！？])", t)
+    if first:
+        t = first.group(1)
     return t[:120].strip()
 
 
@@ -378,7 +387,7 @@ async def generate_summary(title: str, context: str = "") -> str:
         logger.warning("摘要生成失败 | %s | %s", title, exc)
         return ""
 
-    text = clean_summary(raw)
+    text = clean_summary(raw, title)
     if text:
         caches.summary_set(title, text)
         caches.flush()

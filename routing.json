@@ -3,16 +3,19 @@
   "_comment": "任务 → 模型（有序，前者优先）。列表为空 = 该任务不限，按 models.json 顺序使用全部模型。",
   "tasks": {
     "search": {
-      "models": []
+      "models": [
+        "deepseek:deepseek-flash"
+      ]
     },
     "summary": {
       "models": [
+        "local:qwen-local",
         "siliconflow:Qwen/Qwen3-8B"
       ]
     },
     "page": {
       "models": [
-        "deepseek:deepseek-chat"
+        "deepseek:deepseek-flash"
       ]
     }
   }

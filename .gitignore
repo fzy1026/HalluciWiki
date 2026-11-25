@@ -11,6 +11,7 @@ cache/
 # ---- 敏感配置：含明文 API Key，绝不入库 ----
 models.json
 .env
+models.json
 
 # ---- 备份 ----
 _bak.*/

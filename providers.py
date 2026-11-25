@@ -425,8 +425,13 @@ async def chat(
     task: str = "page",
     min_chars: int = 0,
     max_tokens: int | None = None,
+    validator=None,
 ) -> tuple[str, Model]:
-    """按该任务配置的模型顺序尝试，返回 (正文, 命中的模型)。全部失败抛 AllModelsFailed。"""
+    """按该任务配置的模型顺序尝试，返回 (正文, 命中的模型)。全部失败抛 AllModelsFailed。
+
+    validator: 可选的质量闸门，接收正文、返回错误描述（str）表示不合格，返回 None 表示通过。
+    不合格时和普通失败一样切下一个模型，这样小模型的退化输出不会污染缓存。
+    """
     reload()
     reload_routing()
     order = candidates(task=task)
@@ -507,6 +512,18 @@ async def chat(
                   cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
             errors.append(f"{m.name}(输出过短 {len(content)} 字)")
             continue
+
+        if validator is not None:
+            try:
+                verdict = validator(content)
+            except Exception as exc:  # noqa: BLE001
+                verdict = f"校验异常 {type(exc).__name__}"
+            if verdict:
+                _fail(m, st, state=COOLING, error=f"质量闸门未通过：{verdict}",
+                      cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+                logger.warning("质量闸门拦下输出，切换下一个 | %s/%s | %s", m.id, m.model, verdict)
+                errors.append(f"{m.name}({verdict})")
+                continue
 
         _ok(m, st, latency_ms=latency, http=resp.status_code, chars=len(content),
             finish=finish, echo=echo)

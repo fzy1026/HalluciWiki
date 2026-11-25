@@ -4,6 +4,7 @@
   "tasks": {
     "search": {
       "models": [
+        "local:qwen-local",
         "deepseek:deepseek-flash"
       ]
     },

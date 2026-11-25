@@ -55,37 +55,52 @@ JOB_TTL_SECONDS = 1800
 JOB_STORE: dict[str, dict] = {}
 SHARE_STORE: dict[str, dict] = {}
 
-def extract_search_summaries(html_fragment: str) -> dict[str, str]:
-    summaries: dict[str, str] = {}
+# ---- A（搜索）本地装配用到的清洗规则 ----
+BULLET_PATTERN = re.compile(r"^[\s\-–—*•·>#]+|^\d+\s*[.、)）]\s*")
+TITLE_JUNK_PATTERN = re.compile(r"[《》“”\"'‘’（）()\[\]【】<>|/\\·:：;；,，.。!！?？]")
+SUBCHAPTER_PATTERN = re.compile(
+    r"(概述|简介|历史|历史发展|结构|分类|开放时间|研究进展|研究|进展|评价|影响|"
+    r"应用领域|理论基础|基本原理|发展史|大事记|争议|现状|前景|介绍|详情|相关内容)$"
+)
+MIN_SEARCH_TITLES = int(os.getenv("MIN_SEARCH_TITLES", "4"))
 
-    pattern_text = re.compile(
-        r'<li[^>]*>.*?<a\s+[^>]*href="/wiki/([^"]+)"[^>]*>(.*?)</a>(.*?)</li>',
-        re.DOTALL | re.IGNORECASE
-    )
-    for match in pattern_text.finditer(html_fragment):
-        raw_title = match.group(1)
-        summary = re.sub(r'<[^>]+>', '', match.group(3)).strip()
-        if summary:
-            title = unquote(raw_title)
-            summaries[title] = summary
+def parse_titles(raw: str, query: str) -> list[str]:
+    """把模型吐的「一行一个条目名」洗成干净的标题列表。
 
-    pattern_attr = re.compile(
-        r'<a\s+[^>]*href="/wiki/([^"]+)"[^>]*data-summary="([^"]*)"[^>]*>',
-        re.DOTALL | re.IGNORECASE
-    )
-    for match in pattern_attr.finditer(html_fragment):
-        raw_title = match.group(1)
-        summary = match.group(2).strip()
-        if summary and unquote(raw_title) not in summaries:
-            title = unquote(raw_title)
-            summaries[title] = summary
+    小模型常见毛病：加序号/项目符号、带书名号、把关键词的子章节当条目、
+    连着写几个只差两三个字的近义词。这里统一收口，交给本地渲染。
+    """
+    out: list[str] = []
+    for line in (raw or "").splitlines():
+        t = BULLET_PATTERN.sub("", line.strip())
+        t = t.split("：")[0].strip() if "：" in t else t
+        t = TITLE_JUNK_PATTERN.sub("", t).strip()
+        t = re.sub(r"\s+", "", t)
+        if not (2 <= len(t) <= 14):
+            continue
+        if t != query and SUBCHAPTER_PATTERN.search(t):
+            continue
+        if t in out:
+            continue
+        if any(t in o or o in t for o in out):
+            continue
+        out.append(t)
+    if query and query not in out:
+        out.insert(0, query)
+    return out
 
-    return summaries
 
-def store_search_summaries(summaries: dict[str, str]) -> None:
-    """B 层缓存：搜索结果里抠出来的摘要，落盘保存（重启不丢）。"""
-    caches.store_summaries(summaries)
-    caches.flush()
+def make_title_validator(query: str):
+    """A 的质量闸门：标题太少、或全是关键词的子章节，就判不合格切下一个模型。"""
+
+    def check(content: str) -> str | None:
+        titles = parse_titles(content, query)
+        if len(titles) < MIN_SEARCH_TITLES:
+            return f"标题不足（{len(titles)} 个）"
+        return None
+
+    return check
+
 
 def get_search_summary(title: str) -> str | None:
     """B 层缓存查询：拿这个页面名对应的摘要。"""
@@ -339,12 +354,12 @@ async def process_image_placeholders(html: str) -> str:
 
     return result
 
-async def call_llm(prompt: str, *, purpose: str = "wiki", min_chars: int = 0) -> str:
+async def call_llm(prompt: str, *, purpose: str = "wiki", min_chars: int = 0, validator=None) -> str:
     """按 routing.json 的分工，用该任务配置的模型顺序轮询；一个失败自动换下一个。"""
     task = "page" if purpose == "wiki" else purpose
     try:
         content, model = await providers.chat(
-            async_client, prompt, task=task, min_chars=min_chars
+            async_client, prompt, task=task, min_chars=min_chars, validator=validator
         )
     except providers.AllModelsFailed as exc:
         logger.error("所有模型均不可用 | %s", exc)
@@ -393,63 +408,6 @@ async def generate_summary(title: str, context: str = "") -> str:
         caches.flush()
     return text
 
-
-SEARCH_LI = re.compile(r"<li[^>]*>(.*?)</li>", re.S | re.I)
-SEARCH_LINK = re.compile(r'<a\s+[^>]*href="/wiki/([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
-
-
-def _plain(html_text: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html_text or "")).strip()
-
-
-async def polish_search_fragment(query: str, fragment: str, summaries: dict[str, str]) -> str:
-    """把模型给的搜索结果，重排成本地统一结构；缺摘要的条目用 B 函数补齐。"""
-    items: list[dict] = []
-    for li_html in SEARCH_LI.findall(fragment):
-        match = SEARCH_LINK.search(li_html)
-        if not match:
-            continue
-        title = unquote(match.group(1)).strip()
-        if not title:
-            continue
-        snippet = _plain(li_html[match.end():])
-        summary = summaries.get(title) or snippet
-        items.append({
-            "title": title,
-            "summary": summary,
-            "need": len(summary) < 8,
-        })
-
-    if not items:
-        return fragment
-
-    items = items[:SUMMARY_MAX_RESULTS]
-
-    pending = [it for it in items if it["need"]]
-    if pending:
-        logger.info("搜索结果摘要缺失 %d 条，调用 B 函数补齐 | %s", len(pending), query)
-        generated = await asyncio.gather(
-            *(generate_summary(it["title"], query) for it in pending),
-            return_exceptions=True,
-        )
-        for it, text in zip(pending, generated):
-            if isinstance(text, str) and text:
-                it["summary"] = text
-                it["need"] = False
-
-    rows = []
-    for it in items:
-        title = escape(it["title"])
-        summary = escape(it["summary"] or "该条目暂无摘要。")
-        path = quote(it["title"])
-        rows.append(
-            '<li>'
-            f'<a href="/wiki/{path}" data-summary="{summary}">{title}</a>'
-            f'<span class="result-snippet">{summary}</span>'
-            f'<span class="result-url">wiki.chamdev.site › wiki › {title}</span>'
-            '</li>'
-        )
-    return '<ul class="search-result-list">' + "".join(rows) + "</ul>"
 
 async def generate_and_review(title: str, enable_images: bool = False, job_id: str | None = None, link_summary: str = "") -> str:
     """构建正文片段 → HTML 格式校验 → 返回片段"""
@@ -566,27 +524,40 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
         return cached
 
     if job_id:
-        update_job(job_id, state="running", progress=30, stage="整理搜索结果", message=f"正在构建搜索词 {query} 的结果页。")
+        update_job(job_id, state="running", progress=25, stage="检索条目", message=f"正在为 {query} 检索相关条目。")
 
+    # A：模型只输出「一行一个条目名」，HTML 全部由本地脚本装配
     prompt = SEARCH_PROMPT.format(query=query)
-    fragment = await call_llm(prompt, purpose="search", min_chars=MIN_SEARCH_CHARS)
+    raw = await call_llm(prompt, purpose="search", min_chars=8, validator=make_title_validator(query))
 
-    # A 的输出顺带产出了 B（每条链接的 data-summary），存进摘要缓存供后续条目使用
-    summaries = extract_search_summaries(fragment)
-    store_search_summaries(summaries)
-
-    # 重排成本地统一结构：缺摘要的条目用 B 函数补齐，避免糊成一团
-    fragment = await polish_search_fragment(query, fragment, summaries)
+    titles = parse_titles(raw, query)[:SUMMARY_MAX_RESULTS]
+    logger.info("搜索条目解析 | %s | %d 条 | %s", query, len(titles), " / ".join(titles[:8]))
 
     if job_id:
-        update_job(job_id, progress=85, stage="整理版式", message="正在整理搜索结果的 HTML 结构。")
+        update_job(job_id, progress=60, stage="补摘要", message=f"已找到 {len(titles)} 个条目，正在补写摘要。")
+
+    # B：并发补摘要（命中缓存直接用，没命中才调模型）
+    fetched = await asyncio.gather(*(generate_summary(t, query) for t in titles), return_exceptions=True)
+    summary_map = {t: s for t, s in zip(titles, fetched) if isinstance(s, str) and s}
+
+    rows = []
+    for i, title in enumerate(titles):
+        snippet = summary_map.get(title) or "该条目暂无摘要。"
+        cls = ' class="search-main"' if i == 0 else ""
+        rows.append(
+            f"<li{cls}>"
+            f'<a href="/wiki/{quote(title)}" data-summary="{escape(snippet)}">{escape(title)}</a>'
+            f'<span class="result-snippet">{escape(snippet)}</span>'
+            f'<span class="result-url">wiki.chamdev.site › wiki › {escape(title)}</span>'
+            "</li>"
+        )
 
     body = (
         '<div class="search-results">'
-        f'<div class="article-meta"><span class="article-badge">搜索</span>'
-        f'<span>{escape(query)}</span></div>'
-        f'{fragment}'
-        '</div>'
+        '<div class="article-meta"><span class="article-badge">搜索</span>'
+        f"<span>{escape(query)} · {len(titles)} 条结果</span></div>"
+        f'<ul class="search-result-list">{"".join(rows)}</ul>'
+        "</div>"
     )
     html = render_full_page(body, page_title=f"搜索结果：{query}")
     caches.search_set(query, html)
@@ -595,6 +566,7 @@ async def get_search_page(query: str, job_id: str | None = None) -> str:
         update_job(job_id, progress=100, stage="完成", message="搜索结果已准备好。")
 
     return html
+
 
 async def generate_page_for_target(target_url: str, job_id: str) -> None:
     parsed = urlparse(target_url)

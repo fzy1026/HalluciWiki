@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        :root {
+            --bg: #f8f9fa;
+            --panel: #ffffff;
+            --border: #a2a9b1;
+            --border-soft: #c8ccd1;
+            --text: #202122;
+            --muted: #54595d;
+            --link: #0645ad;
+            --link-hover: #0b0080;
+            --accent: #3366cc;
+            --accent-soft: #d8e3f2;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { background: var(--bg); }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: linear-gradient(180deg, #f6f7f8 0%, #eef1f4 100%); color: var(--text); min-height: 100vh; }
+        a { color: var(--link); text-decoration: none; }
+        a:hover { color: var(--link-hover); text-decoration: underline; }
+        .site-shell { max-width: 1240px; margin: 0 auto; }
+        .site-topbar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.95rem 1.25rem;
+            border-bottom: 1px solid var(--border-soft);
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+        .brand {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.05;
+            min-width: 0;
+        }
+        .brand strong {
+            font-size: 1.05rem;
+            letter-spacing: 0.02em;
+        }
+        .brand span {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+        .site-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+            flex-wrap: wrap;
+        }
+        .site-nav a {
+            padding: 0.4rem 0.55rem;
+            border-radius: 999px;
+            color: #2a4b8d;
+        }
+        .site-nav a:hover {
+            background: var(--accent-soft);
+            text-decoration: none;
+        }
+        .nav-search {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: min(100%, 360px);
+        }
+        .nav-search form {
+            display: flex;
+            gap: 0.5rem;
+            width: 100%;
+        }
+        .nav-search input {
+            flex: 1;
+            padding: 0.72rem 0.85rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--text);
+            font-size: 0.95rem;
+        }
+        .nav-search input:focus {
+            outline: 2px solid rgba(51, 102, 204, 0.25);
+            border-color: var(--accent);
+        }
+        .nav-search button {
+            padding: 0.72rem 1rem;
+            border: 1px solid #2a4b8d;
+            border-radius: 6px;
+            background: linear-gradient(180deg, #3c6fd1 0%, #2a4b8d 100%);
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .nav-search button:hover {
+            filter: brightness(1.04);
+        }
+        main {
+            max-width: 1040px;
+            margin: 1.25rem auto 0;
+            padding: 0 1rem 2rem;
+        }
+        article.wiki-article {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+            padding: clamp(1.25rem, 2vw, 2rem);
+        }
+        article.wiki-article h1 {
+            font-size: clamp(1.9rem, 3vw, 2.55rem);
+            line-height: 1.2;
+            margin-bottom: 0.8rem;
+            border-bottom: 1px solid var(--border-soft);
+            padding-bottom: 0.6rem;
+        }
+        article.wiki-article h2,
+        article.wiki-article h3 {
+            margin-top: 1.45rem;
+            margin-bottom: 0.7rem;
+            padding-bottom: 0.3rem;
+            border-bottom: 1px solid var(--border-soft);
+        }
+        article.wiki-article p,
+        article.wiki-article li {
+            line-height: 1.75;
+            font-size: 1rem;
+        }
+        article.wiki-article p + p,
+        article.wiki-article ul + p,
+        article.wiki-article ol + p {
+            margin-top: 0.9rem;
+        }
+        article.wiki-article ul,
+        article.wiki-article ol {
+            margin: 0.85rem 0 0.85rem 1.4rem;
+        }
+        article.wiki-article li + li {
+            margin-top: 0.35rem;
+        }
+        article.wiki-article blockquote {
+            border-left: 4px solid var(--accent);
+            background: #f8fbff;
+            margin: 1rem 0;
+            padding: 0.9rem 1rem;
+            color: #404244;
+        }
+        article.wiki-article table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.95rem;
+        }
+        article.wiki-article th,
+        article.wiki-article td {
+            border: 1px solid var(--border-soft);
+            padding: 0.65rem 0.75rem;
+            vertical-align: top;
+        }
+        article.wiki-article th {
+            background: #f8f9fa;
+            text-align: left;
+        }
+        article.wiki-article img {
+            max-width: 100%;
+            height: auto;
+        }
+        article.wiki-article hr {
+            border: 0;
+            border-top: 1px solid var(--border-soft);
+            margin: 1.2rem 0;
+        }
+        .article-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+        .article-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.28rem 0.6rem;
+            border: 1px solid var(--border-soft);
+            border-radius: 999px;
+            background: #f8f9fa;
+        }
+        footer {
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 0 1rem 1.5rem;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+        @media (max-width: 820px) {
+            .site-topbar {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .nav-search {
+                margin-left: 0;
+                width: 100%;
+            }
+        }
+        .img-opt {
+            font-size: 0.82rem;
+            margin-left: 0.15rem;
+            opacity: 0.45;
+            transition: opacity 0.2s;
+            text-decoration: none !important;
+        }
+        .img-opt:hover {
+            opacity: 1;
+            text-decoration: none !important;
+        }
+        .img-toggle-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.88rem;
+            color: var(--muted);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .img-toggle-wrap input { display: none; }
+        .img-toggle-track {
+            width: 2.2rem;
+            height: 1.15rem;
+            background: #c8ccd1;
+            border-radius: 999px;
+            position: relative;
+            transition: background 0.2s;
+        }
+        .img-toggle-track::after {
+            content: '';
+            position: absolute;
+            top: 0.12rem;
+            left: 0.12rem;
+            width: 0.9rem;
+            height: 0.9rem;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .img-toggle-wrap input:checked + .img-toggle-track {
+            background: #3366cc;
+        }
+        .img-toggle-wrap input:checked + .img-toggle-track::after {
+            transform: translateX(1.05rem);
+        }
+        .share-section {
+            max-width: 1040px;
+            margin: 0.75rem auto 0;
+            padding: 0 1rem;
+            display: none;
+        }
+        .share-section.visible {
+            display: block;
+        }
+        .share-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.5rem 0.85rem;
+            border: 1px solid #a2a9b1;
+            border-radius: 6px;
+            background: #f8f9fa;
+            color: #202122;
+            cursor: pointer;
+            font-size: 0.88rem;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .share-btn:hover {
+            background: #eaecf0;
+            border-color: #72777d;
+        }
+        .share-btn:active {
+            background: #dadde3;
+        }
+        .share-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 999;
+            align-items: center;
+            justify-content: center;
+        }
+        .share-modal-overlay.active {
+            display: flex;
+        }
+        .share-modal {
+            background: #fff;
+            border: 1px solid #c8ccd1;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+            max-width: 480px;
+            width: 92%;
+            padding: 1.5rem;
+            animation: modalIn 0.2s ease;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: translateY(12px) scale(0.97); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .share-modal h3 {
+            margin: 0 0 0.6rem;
+            font-size: 1.15rem;
+        }
+        .share-modal .share-url-box {
+            display: flex;
+            gap: 0.5rem;
+            margin: 0.85rem 0;
+        }
+        .share-modal .share-url-box input {
+            flex: 1;
+            padding: 0.65rem 0.75rem;
+            border: 1px solid #a2a9b1;
+            border-radius: 6px;
+            background: #f8f9fa;
+            font-size: 0.9rem;
+            color: #202122;
+            user-select: all;
+        }
+        .share-modal .share-url-box button {
+            padding: 0.65rem 1rem;
+            border: 1px solid #2a4b8d;
+            border-radius: 6px;
+            background: linear-gradient(180deg, #3c6fd1 0%, #2a4b8d 100%);
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            white-space: nowrap;
+            font-size: 0.9rem;
+        }
+        .share-modal .share-url-box button:hover {
+            filter: brightness(1.04);
+        }
+        .share-modal .share-url-box button.copied {
+            background: #00af89;
+            border-color: #008566;
+        }
+        .share-modal .share-notice {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            border: 1px solid #2a3a5c;
+            border-radius: 8px;
+            padding: 0.75rem 0.9rem;
+            color: #c8d6e5;
+            font-size: 0.82rem;
+            line-height: 1.55;
+            margin-top: 0.85rem;
+        }
+        .share-modal .share-notice strong {
+            color: #e8eef5;
+        }
+        .share-modal .share-close {
+            display: block;
+            margin-top: 0.85rem;
+            padding: 0.45rem 0;
+            border: none;
+            background: none;
+            color: #54595d;
+            cursor: pointer;
+            font-size: 0.88rem;
+            width: 100%;
+            text-align: center;
+        }
+        .share-modal .share-close:hover {
+            color: #202122;
+        }
+        .share-modal .share-loading {
+            text-align: center;
+            padding: 1rem;
+            color: #54595d;
+        }
+        .share-modal .share-error {
+            color: #d33;
+            font-size: 0.9rem;
+            margin: 0.5rem 0;
+        }
+        /* ---------- 链接摘要悬浮提示 ---------- */
+        a[data-summary] {
+            position: relative;
+            text-decoration-style: dotted;
+            text-decoration-color: var(--link);
+            cursor: help;
+        }
+        a[data-summary]:hover {
+            text-decoration-style: solid;
+        }
+        a[data-summary]::after {
+            content: attr(data-summary);
+            position: absolute;
+            left: 0;
+            bottom: calc(100% + 8px);
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e8eef5;
+            padding: 0.6rem 0.9rem;
+            border-radius: 8px;
+            font-size: 0.84rem;
+            font-weight: 400;
+            white-space: normal;
+            max-width: 380px;
+            min-width: 160px;
+            z-index: 1000;
+            line-height: 1.55;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.28);
+            pointer-events: none;
+            word-break: break-word;
+            opacity: 0;
+            transform: translateY(4px);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        a[data-summary]:hover::after {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+    <script>
+        (function () {
+            const loadingPrefix = '/loading?next=';
+            const IMG_STORAGE_KEY = 'halluciwiki_img_enabled';
+
+            function shouldIgnoreLink(link, event) {
+                if (!link) return true;
+                if (link.target && link.target !== '_self') return true;
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return true;
+                const href = link.getAttribute('href') || '';
+                return !href || href.startsWith('http://') || href.startsWith('https://') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('#');
+            }
+
+            function goToLoading(nextUrl) {
+                window.location.href = loadingPrefix + encodeURIComponent(nextUrl);
+            }
+
+            function imageEnabled() {
+                const toggle = document.getElementById('img-toggle');
+                return toggle && toggle.checked;
+            }
+
+            function appendImageParam(url) {
+                if (!imageEnabled()) return url;
+                return url + (url.includes('?') ? '&image=1' : '?image=1');
+            }
+
+            function persistImageToggle() {
+                try {
+                    localStorage.setItem(IMG_STORAGE_KEY, imageEnabled() ? '1' : '0');
+                } catch (e) { /* ignore */ }
+            }
+
+            function loadImageToggle() {
+                var toggle = document.getElementById('img-toggle');
+                if (!toggle) return;
+                try {
+                    toggle.checked = localStorage.getItem(IMG_STORAGE_KEY) === '1';
+                } catch (e) { /* ignore */ }
+                toggle.addEventListener('change', persistImageToggle);
+            }
+
+            document.addEventListener('DOMContentLoaded', loadImageToggle);
+
+            document.addEventListener('click', function (event) {
+                const link = event.target.closest('a[href]');
+                if (!link || shouldIgnoreLink(link, event)) {
+                    return;
+                }
+
+                const href = link.getAttribute('href');
+                const summary = link.getAttribute('data-summary') || '';
+                let finalHref = href;
+
+                if (summary && (href.startsWith('/wiki/') || href.startsWith('/search'))) {
+                    const sep = href.includes('?') ? '&' : '?';
+                    finalHref = href + sep + 'summary=' + encodeURIComponent(summary);
+                }
+
+                if (href.startsWith('/wiki/') || href.startsWith('/search') || href === '/random') {
+                    event.preventDefault();
+                    goToLoading(appendImageParam(finalHref));
+                }
+            });
+
+            document.addEventListener('submit', function (event) {
+                const form = event.target.closest('form');
+                if (!form) return;
+
+                const action = form.getAttribute('action') || '/';
+                const method = (form.getAttribute('method') || 'get').toLowerCase();
+                if (method !== 'get' || action !== '/search') return;
+
+                event.preventDefault();
+                const params = new URLSearchParams(new FormData(form));
+                const nextUrl = `${action}?${params.toString()}`;
+                goToLoading(nextUrl);
+            });
+        })();
+
+        (function () {
+            document.addEventListener('DOMContentLoaded', function () {
+            var article = document.querySelector('.wiki-article');
+            var shareTarget = article ? article.getAttribute('data-share-target') : '';
+            var shareSection = document.getElementById('share-section');
+            var shareBtn = document.getElementById('share-btn');
+            var overlay = document.getElementById('share-modal-overlay');
+            var loading = document.getElementById('share-loading');
+            var errorEl = document.getElementById('share-error');
+            var result = document.getElementById('share-result');
+            var urlInput = document.getElementById('share-url-input');
+            var copyBtn = document.getElementById('share-copy-btn');
+            var closeBtn = document.getElementById('share-close');
+
+            if (shareTarget && shareTarget.startsWith('/wiki/')) {
+                shareSection.classList.add('visible');
+            }
+
+            function openModal() {
+                overlay.classList.add('active');
+                loading.style.display = 'block';
+                errorEl.style.display = 'none';
+                result.style.display = 'none';
+                copyBtn.textContent = '复制链接';
+                copyBtn.classList.remove('copied');
+
+                fetch('/api/share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target_url: shareTarget })
+                })
+                .then(function (res) {
+                    if (!res.ok) {
+                        return res.json().then(function (data) {
+                            throw new Error(data.detail || '分享失败');
+                        });
+                    }
+                    return res.json();
+                })
+                .then(function (data) {
+                    loading.style.display = 'none';
+                    result.style.display = 'block';
+                    urlInput.value = window.location.origin + data.share_url;
+                })
+                .catch(function (err) {
+                    loading.style.display = 'none';
+                    errorEl.style.display = 'block';
+                    errorEl.textContent = '锚定失败：' + err.message;
+                });
+            }
+
+            function closeModal() {
+                overlay.classList.remove('active');
+            }
+
+            shareBtn.addEventListener('click', openModal);
+            closeBtn.addEventListener('click', closeModal);
+            overlay.addEventListener('click', function (e) {
+                if (e.target === overlay) closeModal();
+            });
+
+            copyBtn.addEventListener('click', function () {
+                urlInput.select();
+                try {
+                    navigator.clipboard.writeText(urlInput.value).then(function () {
+                        copyBtn.textContent = '已复制';
+                        copyBtn.classList.add('copied');
+                        setTimeout(function () {
+                            copyBtn.textContent = '复制链接';
+                            copyBtn.classList.remove('copied');
+                        }, 2000);
+                    });
+                } catch (e) {
+                    document.execCommand('copy');
+                    copyBtn.textContent = '已复制';
+                    copyBtn.classList.add('copied');
+                    setTimeout(function () {
+                        copyBtn.textContent = '复制链接';
+                        copyBtn.classList.remove('copied');
+                    }, 2000);
+                }
+            });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && overlay.classList.contains('active')) {
+                    closeModal();
+                }
+            });
+            });
+        })();
+    </script>
+</head>
+<body>
+<div class="site-shell">
+    <header class="site-topbar">
+        <div class="brand">
+            <strong>HalluciWiki</strong>
+            <span>百科检索站点</span>
+        </div>
+        <nav class="site-nav" aria-label="站点导航">
+            <a href="/">首页</a>
+            <a href="/about">关于本站</a>
+            <a href="/random">随机条目</a>
+            <label class="img-toggle-wrap" title="在条目中显示插图">
+                <input type="checkbox" id="img-toggle">
+                <span class="img-toggle-track"></span>
+                <span>插图</span>
+            </label>
+        </nav>
+        <div class="nav-search">
+            <form action="/search" method="get" data-wiki-nav>
+                <input type="text" name="q" placeholder="搜索条目、概念或事件" required>
+                <button type="submit">搜索</button>
+            </form>
+        </div>
+    </header>
+    <main>
+        <article class="wiki-article"{{ share_data }}>
+{{ content }}
+        </article>
+        <div class="share-section" id="share-section">
+            <button class="share-btn" id="share-btn">📡 分享此页面</button>
+        </div>
+    </main>
+</div>
+<div class="share-modal-overlay" id="share-modal-overlay">
+    <div class="share-modal">
+        <h3>📡 分享此页面</h3>
+        <div class="share-loading" id="share-loading">正在通过量子信道锚定页面快照……</div>
+        <div class="share-error" id="share-error" style="display:none;"></div>
+        <div id="share-result" style="display:none;">
+            <div class="share-url-box">
+                <input type="text" id="share-url-input" readonly value="">
+                <button id="share-copy-btn">复制链接</button>
+            </div>
+            <div class="share-notice">
+                <strong>多元宇宙量子中继快照</strong><br>
+                此链接内容固定于当前时间锚点，由于跨维度量子连接的退相干效应，<strong>自生成之日起 7 天后自动消散</strong>。在此期间，内容不受主体宇宙信息流变动的影响。
+            </div>
+        </div>
+        <button class="share-close" id="share-close">关闭</button>
+    </div>
+</div>
+<footer>
+    HalluciWiki
+</footer>
+</body>
+</html>

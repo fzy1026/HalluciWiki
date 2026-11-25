@@ -1,0 +1,12 @@
+.env
+models.json
+__pycache__/
+*.pyc
+.vscode/
+git/
+*.tar.gz
+search_cache/
+cache/
+wiki/
+shares/
+wiki_image/

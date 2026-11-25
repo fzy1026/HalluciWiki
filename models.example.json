@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "_comment": "模型清单：种类 + 密钥 + 型号全部在这里，数组顺序 = 优先级（1 号优先，失败自动切下一个）。改完保存即生效，不用重建镜像、不用重启。",
+  "defaults": {
+    "timeout": 90,
+    "temperature": 0.7
+  },
+  "providers": [
+    {
+      "id": "siliconflow",
+      "name": "硅基流动",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "api_key": "",
+      "models": [
+        "Qwen/Qwen3-8B"
+      ],
+      "max_tokens": 4096
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "",
+      "model": "deepseek-chat",
+      "max_tokens": 8192
+    },
+    {
+      "id": "dashscope",
+      "name": "阿里百炼",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": "",
+      "model": "qwen-plus",
+      "max_tokens": 6000
+    },
+    {
+      "id": "bigmodel",
+      "name": "智谱 GLM",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key": "",
+      "model": "glm-4-flash",
+      "max_tokens": 4096
+    },
+    {
+      "id": "modelscope",
+      "name": "魔搭 ModelScope",
+      "base_url": "https://api-inference.modelscope.cn/v1",
+      "api_key": "",
+      "model": "Qwen/Qwen2.5-72B-Instruct",
+      "max_tokens": 4096
+    },
+    {
+      "id": "groq",
+      "name": "Groq（境外）",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key": "",
+      "model": "llama-3.3-70b-versatile",
+      "max_tokens": 4096
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter（握手 8 秒，默认关）",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "",
+      "model": "deepseek/deepseek-chat-v3.1:free",
+      "enabled": false,
+      "headers": {
+        "HTTP-Referer": "https://wiki.chamdev.site",
+        "X-Title": "HalluciWiki"
+      }
+    }
+  ]
+}

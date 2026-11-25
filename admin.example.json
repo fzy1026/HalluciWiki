@@ -1,0 +1,11 @@
+{
+  "username": "admin",
+  "password": "换成你自己的强密码",
+  "_comment_1": "也可以用 password_sha256 代替 password：printf '%s' '密码' | sha256sum",
+  "password_sha256": "",
+  "secret": "",
+  "_comment_2": "secret 留空会自动生成并写回本文件，用于给登录 cookie 签名",
+  "session_hours": 24,
+  "max_attempts": 5,
+  "lock_minutes": 10
+}

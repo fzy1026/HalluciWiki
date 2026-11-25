@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse, parse_qs, quote
 from html import escape
 
 import httpx
-from fastapi import FastAPI, Query, HTTPException, Request, Form
+from fastapi import FastAPI, Query, HTTPException, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -24,6 +24,7 @@ from image_generator import generate_image
 import providers
 import monitor_page
 import caches
+import admin_auth
 
 # 正文最少字数：低于这个值视为模型输出不合格，自动换下一个模型
 MIN_ARTICLE_CHARS = int(os.getenv("MIN_ARTICLE_CHARS", "1200"))
@@ -266,6 +267,7 @@ async def lifespan(app: FastAPI):
     global async_client
     async_client = httpx.AsyncClient(timeout=60.0)
     load_templates(force=True)
+    admin_auth.reload(force=True)
     CACHE_DIR.mkdir(exist_ok=True)
     IMAGE_CACHE_DIR.mkdir(exist_ok=True)
     SHARES_DIR.mkdir(exist_ok=True)
@@ -675,21 +677,105 @@ async def random_page(image: bool = Query(False)):
 async def health():
     return {"status": "ok", "cache": caches.stats()}
 
-# ---------- 监控页：/admin* 由 Caddy 的 basic_auth 保护 ----------
+# ---------- 登录与鉴权（账号密码在 admin.json，改完保存即生效）----------
+def current_admin(request: Request) -> str:
+    """依赖：没登录就跳登录页。"""
+    user = admin_auth.identify(request.cookies.get(admin_auth.COOKIE_NAME))
+    if not user:
+        raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
+    return user
+
+
+def _client_ip(request: Request) -> str:
+    return admin_auth.client_ip(
+        request.headers.get("x-forwarded-for"),
+        request.client.host if request.client else "",
+    )
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def admin_login_page(request: Request):
+    if admin_auth.identify(request.cookies.get(admin_auth.COOKIE_NAME)):
+        return RedirectResponse("/admin", status_code=303)
+    return HTMLResponse(
+        render_full_page(
+            monitor_page.render_login(error=admin_auth.error()),
+            page_title="管理员登录 - HalluciWiki",
+        )
+    )
+
+
+@app.post("/admin/login")
+async def admin_login_submit(
+    request: Request,
+    username: str = Form(""),
+    password: str = Form(""),
+):
+    ip = _client_ip(request)
+    left = admin_auth.locked(ip)
+    if left:
+        return HTMLResponse(
+            render_full_page(
+                monitor_page.render_login(
+                    username=username,
+                    error=f"失败次数过多，请约 {max(1, left // 60 + 1)} 分钟后再试。",
+                ),
+                page_title="管理员登录 - HalluciWiki",
+            ),
+            status_code=429,
+        )
+
+    if not admin_auth.verify(username, password):
+        admin_auth.record_failure(ip)
+        logger.warning("管理员登录失败 | 用户=%s | IP=%s", username[:40], ip)
+        return HTMLResponse(
+            render_full_page(
+                monitor_page.render_login(username=username, error="用户名或密码不正确。"),
+                page_title="管理员登录 - HalluciWiki",
+            ),
+            status_code=401,
+        )
+
+    admin_auth.clear_failures(ip)
+    hours = admin_auth.cfg()["session_hours"]
+    resp = RedirectResponse("/admin", status_code=303)
+    resp.set_cookie(
+        admin_auth.COOKIE_NAME,
+        admin_auth.issue(username),
+        max_age=hours * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        path="/",
+    )
+    logger.info("管理员登录成功 | 用户=%s | IP=%s", username, ip)
+    return resp
+
+
+@app.post("/admin/logout")
+async def admin_logout():
+    resp = RedirectResponse("/admin/login", status_code=303)
+    resp.delete_cookie(admin_auth.COOKIE_NAME, path="/")
+    logger.info("管理员已退出登录")
+    return resp
+
+
+# ---------- 监控页：/admin* 由签名 cookie 保护 ----------
 @app.get("/admin", response_class=HTMLResponse)
-async def admin_page():
+async def admin_page(user: str = Depends(current_admin)):
     data = providers.snapshot()
+    data["admin_user"] = user
     return HTMLResponse(
         render_full_page(monitor_page.render(data), page_title="模型状态 - HalluciWiki")
     )
 
 @app.get("/admin/state")
-async def admin_state():
+async def admin_state(user: str = Depends(current_admin)):
     """给脚本 / 监控用的 JSON 版本。"""
     return JSONResponse(providers.snapshot())
 
 @app.post("/admin/probe")
-async def admin_probe(key: str | None = None):
+async def admin_probe(key: str | None = None, user: str = Depends(current_admin)):
     """手动检测：不带 key 检测全部，带 key（kind:model）只检测那一个。"""
     if key:
         await providers.probe_one(key)
@@ -701,7 +787,12 @@ async def admin_probe(key: str | None = None):
 
 
 @app.post("/admin/routing")
-async def admin_routing(task: str = Form(...), op: str = Form(...), key: str = Form("")):
+async def admin_routing(
+    task: str = Form(...),
+    op: str = Form(...),
+    key: str = Form(""),
+    user: str = Depends(current_admin),
+):
     """模型分工的即时调整：up / down / remove / add / clear。"""
     if task not in providers.TASKS:
         raise HTTPException(status_code=400, detail="未知任务")

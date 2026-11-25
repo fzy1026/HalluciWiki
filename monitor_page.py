@@ -157,6 +157,53 @@ def _routing_panel(data: dict) -> str:
 """
 
 
+def render_login(username: str = "", error: str = "") -> str:
+    """登录页：账号密码在 admin.json（服务器上改），这里只负责表单。"""
+    err = ""
+    if error:
+        err = (f'<div style="background:#fee7e6;border:1px solid #f5c2c0;border-radius:6px;'
+               f'padding:9px 12px;margin:0 0 14px;color:#b32424;font-size:13px;">{_e(error)}</div>')
+
+    return f"""
+<style>
+  .lg-card {{ max-width:400px; margin:1.4rem auto 2rem; padding:24px 26px;
+              border:1px solid #c8ccd1; border-radius:8px; background:#fff; }}
+  .lg-card label {{ display:block; font-size:13px; color:#54595d; margin-bottom:14px; }}
+  .lg-card input {{ display:block; width:100%; margin-top:6px; padding:8px 10px; font-size:14px;
+                    border:1px solid #c8ccd1; border-radius:5px; box-sizing:border-box; }}
+  .lg-card input:focus {{ outline:none; border-color:#3366cc; box-shadow:0 0 0 2px rgba(51,102,204,.12); }}
+</style>
+
+<div class="article-meta">
+  <span class="article-badge">运维</span>
+  <span>需要登录</span>
+</div>
+<h1>管理员登录</h1>
+<p style="color:#54595d;font-size:14px;">
+这里是模型监控与分工面板的入口，需要管理员账号。登录状态保持 24 小时（可配）。
+</p>
+
+<div class="lg-card">
+  {err}
+  <form method="post" action="/admin/login">
+    <label>用户名
+      <input name="username" value="{_e(username)}" autocomplete="username" autofocus>
+    </label>
+    <label>密码
+      <input name="password" type="password" autocomplete="current-password">
+    </label>
+    <button type="submit" style="width:100%;padding:10px;border-radius:5px;border:1px solid #3366cc;
+            background:#3366cc;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">登录</button>
+  </form>
+</div>
+
+<p style="font-size:12px;color:#72777d;text-align:center;">
+账号密码在服务器上的 <code style="background:#f8f9fa;padding:1px 5px;border-radius:3px;">/opt/hub/apps/halluciwiki/admin.json</code>，
+改完保存即生效，不用重启。连续输错会被临时锁定。
+</p>
+"""
+
+
 def render(data: dict) -> str:
     ov = data["overview"]
     rows = data["rows"]
@@ -275,6 +322,11 @@ def render(data: dict) -> str:
   </form>
   <a class="mp-btn ghost" href="/admin">刷新本页</a>
   <span style="color:#a2a9b1;font-size:12px;">每个模型只发 4 个 token 的 ping，几乎不消耗额度</span>
+  <form method="post" action="/admin/logout" style="margin:0 0 0 auto;">
+    <button class="mp-btn ghost" type="submit" style="border-color:#c8ccd1;color:#54595d;">
+      退出登录{(' · ' + _e(data.get("admin_user", ""))) if data.get("admin_user") else ''}
+    </button>
+  </form>
 </div>
 
 <div style="overflow-x:auto;">

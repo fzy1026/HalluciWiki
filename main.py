@@ -223,20 +223,40 @@ def describe_target(target_url: str) -> str:
         return "随机条目"
     return target_url or "页面"
 
-# ---------- 模板预加载 ----------
+# ---------- 模板预加载（支持热加载：文件改动后下次渲染自动生效）----------
+TEMPLATE_FILES = {
+    "layout": "templates/layout.html",
+    "home_content": "templates/home_content.html",
+    "about_content": "templates/about_content.html",
+    "loading": "templates/loading.html",
+}
 templates = {}  # 存储布局、首页内容、关于内容、加载页
+_template_mtimes: dict[str, float] = {}
 
-def load_templates():
+def load_templates(force: bool = False):
+    """按 mtime 增量加载：只有改过的文件才重新读盘，没改就几乎零开销。"""
     global templates
-    files = {
-        "layout": "templates/layout.html",
-        "home_content": "templates/home_content.html",
-        "about_content": "templates/about_content.html",
-        "loading": "templates/loading.html"
-    }
-    for name, path in files.items():
-        with open(path, "r", encoding="utf-8") as f:
-            templates[name] = f.read()
+    for name, path in TEMPLATE_FILES.items():
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if not force and _template_mtimes.get(name) == mtime and name in templates:
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                templates[name] = f.read()
+            _template_mtimes[name] = mtime
+            if not force:
+                logger.info("模板已热加载 | %s", path)
+        except OSError as exc:
+            logger.warning("模板读取失败 | %s | %s", path, exc)
+
+
+def tpl(name: str) -> str:
+    """取模板内容：先按 mtime 热加载，再返回，避免读到上一版。"""
+    load_templates()
+    return templates.get(name, "")
 
 # ---------- HTTP 客户端 ----------
 async_client = None
@@ -245,7 +265,7 @@ async_client = None
 async def lifespan(app: FastAPI):
     global async_client
     async_client = httpx.AsyncClient(timeout=60.0)
-    load_templates()
+    load_templates(force=True)
     CACHE_DIR.mkdir(exist_ok=True)
     IMAGE_CACHE_DIR.mkdir(exist_ok=True)
     SHARES_DIR.mkdir(exist_ok=True)
@@ -463,7 +483,7 @@ async def generate_and_review(title: str, enable_images: bool = False, job_id: s
 
 def render_full_page(content_fragment: str, page_title: str = "HalluciWiki", next_url: str = "/", share_target: str = "") -> str:
     """将内容片段插入统一布局"""
-    layout = templates["layout"]
+    layout = tpl("layout")
     share_data = f' data-share-target="{share_target}"' if share_target else ""
     return (
         layout.replace("{{ title }}", page_title)
@@ -473,7 +493,7 @@ def render_full_page(content_fragment: str, page_title: str = "HalluciWiki", nex
     )
 
 def render_loading_page(next_url: str, job_id: str, target_label: str, result_url: str) -> str:
-    loading = templates["loading"]
+    loading = tpl("loading")
     return (
         loading.replace("{{ next_url }}", next_url)
         .replace("{{ job_id }}", job_id)
@@ -605,12 +625,12 @@ async def generate_page_for_target(target_url: str, job_id: str) -> None:
 # ---------- 路由 ----------
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    content = templates["home_content"]
+    content = tpl("home_content")
     return HTMLResponse(render_full_page(content, page_title="HalluciWiki - 首页"))
 
 @app.get("/about", response_class=HTMLResponse)
 async def about():
-    content = templates["about_content"]
+    content = tpl("about_content")
     return HTMLResponse(render_full_page(content, page_title="关于 HalluciWiki"))
 
 @app.get("/loading", response_class=HTMLResponse)
@@ -777,9 +797,9 @@ async def create_share(request: Request):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"生成搜索结果失败: {str(e)}")
     elif parsed.path == "/":
-        html = render_full_page(templates["home_content"], page_title="HalluciWiki - 首页")
+        html = render_full_page(tpl("home_content"), page_title="HalluciWiki - 首页")
     elif parsed.path == "/about":
-        html = render_full_page(templates["about_content"], page_title="关于 HalluciWiki")
+        html = render_full_page(tpl("about_content"), page_title="关于 HalluciWiki")
     else:
         raise HTTPException(status_code=400, detail="不支持的分享目标")
 

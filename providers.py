@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -72,7 +73,11 @@ QUOTA_HEADERS = {
 _RESERVED = {
     "id", "name", "base_url", "api_key", "model", "models",
     "enabled", "timeout", "headers", "params", "comment", "_comment",
+    "type", "api",
 }
+
+TYPE_TEXT = "text"
+TYPE_IMAGE = "image"
 
 
 def _expand_env(value: str) -> str:
@@ -97,6 +102,8 @@ class Model:
     timeout: float = 90.0
     params: dict = field(default_factory=dict)
     headers: dict = field(default_factory=dict)
+    type: str = TYPE_TEXT      # text（文本生成） / image（生图）
+    api: str = ""              # 生图时用哪种协议：images（/images/generations） / chat（多模态）
 
     @property
     def key(self) -> str:
@@ -105,6 +112,14 @@ class Model:
     @property
     def chat_url(self) -> str:
         return self.base_url.rstrip("/") + "/chat/completions"
+
+    @property
+    def images_url(self) -> str:
+        return self.base_url.rstrip("/") + "/images/generations"
+
+    @property
+    def is_image(self) -> bool:
+        return self.type == TYPE_IMAGE
 
     @property
     def configured(self) -> bool:
@@ -146,8 +161,8 @@ _probe_lock = asyncio.Lock()
 
 # ---- 任务路由：task → 模型 key 有序列表 -------------------------------------
 # tasks 为空列表 / 缺失 = 不限制，按 models.json 顺序用全部模型
-TASKS = ("search", "summary", "page")
-TASK_LABELS = {"search": "搜索 A", "summary": "摘要 B", "page": "页面 C"}
+TASKS = ("search", "summary", "page", "image")
+TASK_LABELS = {"search": "搜索 A", "summary": "摘要 B", "page": "页面 C", "image": "插图 D"}
 
 _ROUTING: dict[str, list[str]] = {}
 _routing_mtime: float = -1.0
@@ -187,6 +202,14 @@ def _parse(payload: dict) -> list[Model]:
             params["max_tokens"] = defaults["max_tokens"]
 
         headers = {str(k): _expand_env(str(v)) for k, v in (raw.get("headers") or {}).items()}
+        mtype = str(raw.get("type") or TYPE_TEXT).strip().lower()
+        if mtype not in (TYPE_TEXT, TYPE_IMAGE):
+            mtype = TYPE_TEXT
+        image_api = str(raw.get("api") or "").strip().lower()
+        if mtype == TYPE_IMAGE and image_api not in ("images", "chat"):
+            image_api = "images"
+        if mtype == TYPE_TEXT:
+            image_api = ""
 
         models = raw.get("models")
         if not models:
@@ -197,6 +220,7 @@ def _parse(payload: dict) -> list[Model]:
                 id=pid, name=name, base_url=base_url, api_key=api_key,
                 model=str(m).strip(), enabled=enabled, timeout=timeout,
                 params=dict(params), headers=dict(headers),
+                type=mtype, api=image_api,
             ))
     return out
 
@@ -347,16 +371,23 @@ def save_routing(tasks: dict[str, list[str]]) -> None:
 
 
 def _models_for(task: str | None) -> list[Model]:
+    """按任务取模型池：image 任务只用生图模型，其余任务只用文本模型。"""
+    wanted = TYPE_IMAGE if task == "image" else TYPE_TEXT
     pool = routing_for(task)
-    enabled = [m for m in _MODELS if m.enabled]
+    enabled = [m for m in _MODELS if m.enabled and m.type == wanted]
     if not pool:
         return enabled
     by_key = {m.key: m for m in enabled}
     picked = [by_key[k] for k in pool if k in by_key]
     if not picked:
-        # 配置漂移（比如模型被改名/删掉）时不能让站点直接死掉，退回全部模型
+        # 配置漂移（比如模型被改名/删掉）时不能让站点直接死掉，退回该类全部模型
         return enabled
     return picked
+
+
+def has_image_model() -> bool:
+    reload()
+    return any(m.enabled and m.is_image and m.configured for m in _MODELS)
 
 
 def candidates(now: float | None = None, task: str | None = None) -> list[Model]:
@@ -542,11 +573,217 @@ async def chat(
     raise AllModelsFailed(detail)
 
 
+ASPECT_SIZES = {
+    "16:9": "1792x1024",
+    "3:2": "1536x1024",
+    "4:3": "1024x768",
+    "1:1": "1024x1024",
+    "9:16": "1024x1792",
+}
+
+
+def _decode_image(payload: dict, api: str) -> bytes | str | None:
+    """从响应里取图：返回 bytes，或 ("url",地址) 由调用方下载。"""
+    if api == "images":
+        for item in payload.get("data") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("b64_json"):
+                return base64.b64decode(item["b64_json"])
+            if item.get("url"):
+                return item["url"]
+        return None
+
+    message = ((payload.get("choices") or [{}])[0] or {}).get("message") or {}
+    for part in message.get("multi_mod_content") or []:
+        inline = (part or {}).get("inline_data") or {}
+        if inline.get("data"):
+            return base64.b64decode(inline["data"])
+    content = message.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict) and image_url.get("url"):
+                return image_url["url"]
+            if isinstance(image_url, str) and image_url:
+                return image_url
+    elif isinstance(content, str) and "base64," in content:
+        return content.split("base64,", 1)[1].strip()
+    return None
+
+
+async def _to_bytes(client: httpx.AsyncClient, value: bytes | str, timeout: float) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    text = str(value).strip()
+    if text.startswith("data:"):
+        head, _, b64 = text.partition("base64,")
+        if b64:
+            return base64.b64decode(b64)
+        return None
+    resp = await client.get(text, timeout=timeout)
+    if resp.status_code == 200:
+        return resp.content
+    return None
+
+
+async def generate_image(
+    client: httpx.AsyncClient,
+    prompt: str,
+    aspect_ratio: str = "16:9",
+) -> tuple[bytes, Model]:
+    """按「插图 D」的配置轮询生图模型，返回 (图片字节, 命中的模型)。"""
+    reload()
+    reload_routing()
+    order = candidates(task="image")
+    if not order:
+        raise AllModelsFailed("没有可用的生图模型：请在 models.json 里加一条 type=image 并填好 api_key")
+
+    errors: list[str] = []
+    for m in order:
+        if not m.configured:
+            continue
+        st = stats_of(m)
+
+        if m.api == "chat":
+            payload = dict(m.params)
+            payload.update({
+                "model": m.model,
+                "messages": [
+                    {"role": "system", "content": f"aspect_ratio={aspect_ratio}"},
+                    {"role": "user", "content": [{"type": "text", "text": prompt}]},
+                ],
+                "modalities": ["text", "image"],
+            })
+            url = m.chat_url
+        else:
+            payload = dict(m.params)
+            payload.setdefault("size", ASPECT_SIZES.get(aspect_ratio, "1024x1024"))
+            payload.update({"model": m.model, "prompt": prompt, "n": 1})
+            url = m.images_url
+
+        headers = {"Content-Type": "application/json", **m.headers,
+                   "Authorization": f"Bearer {m.api_key}"}
+
+        started = time.monotonic()
+        try:
+            resp = await client.post(url, json=payload, headers=headers, timeout=m.timeout)
+        except Exception as exc:  # noqa: BLE001
+            latency = int((time.monotonic() - started) * 1000)
+            msg = f"{type(exc).__name__}: {exc}"[:200]
+            _fail(m, st, state=COOLING, error=msg, cooldown=COOLDOWN_SECONDS, latency_ms=latency)
+            logger.warning("生图失败，切换下一个 | %s/%s | %s", m.id, m.model, msg)
+            errors.append(f"{m.name}({msg[:50]})")
+            continue
+
+        latency = int((time.monotonic() - started) * 1000)
+        _capture_quota(st, resp.headers)
+
+        if resp.status_code != 200:
+            body = " ".join(resp.text.split())[:180]
+            if resp.status_code in (401, 403):
+                _fail(m, st, state=DEAD, error=f"HTTP {resp.status_code} 鉴权失败 {body}",
+                      cooldown=BAD_KEY_COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            elif resp.status_code == 404:
+                _fail(m, st, state=DEAD, error=f"HTTP 404 接口或型号不对 {body}",
+                      cooldown=BAD_KEY_COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            else:
+                _fail(m, st, state=COOLING, error=f"HTTP {resp.status_code} {body}",
+                      cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            logger.warning("生图失败，切换下一个 | %s/%s | HTTP %s", m.id, m.model, resp.status_code)
+            errors.append(f"{m.name}(HTTP {resp.status_code})")
+            continue
+
+        try:
+            parsed = resp.json()
+            raw = _decode_image(parsed, m.api)
+        except Exception as exc:  # noqa: BLE001
+            _fail(m, st, state=COOLING, error=f"响应解析失败 {type(exc).__name__}: {exc}",
+                  cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            errors.append(f"{m.name}(响应格式异常)")
+            continue
+
+        if not raw:
+            _fail(m, st, state=COOLING, error="接口 200 但没有返回图片数据",
+                  cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            errors.append(f"{m.name}(无图片)")
+            continue
+
+        try:
+            data = await _to_bytes(client, raw, m.timeout)
+        except Exception as exc:  # noqa: BLE001
+            _fail(m, st, state=COOLING, error=f"图片下载失败 {exc}"[:200],
+                  cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            errors.append(f"{m.name}(下载失败)")
+            continue
+
+        if not data:
+            _fail(m, st, state=COOLING, error="图片数据为空",
+                  cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+            errors.append(f"{m.name}(空图片)")
+            continue
+
+        latency = int((time.monotonic() - started) * 1000)
+        _ok(m, st, latency_ms=latency, http=resp.status_code, chars=len(data), finish="image")
+        tst = _task_stat("image")
+        tst["ok"] += 1
+        tst["last_model"] = m.key
+        tst["last_at"] = time.time()
+        tst["last_ms"] = latency
+        logger.info("插图生成成功 | %s/%s | %d KB | %dms", m.id, m.model, len(data) // 1024, latency)
+        return data, m
+
+    tst = _task_stat("image")
+    tst["fail"] += 1
+    detail = "；".join(errors[:4]) if errors else "没有已配置密钥的生图模型"
+    raise AllModelsFailed(detail)
+
+
+async def _probe_image(client: httpx.AsyncClient, m: Model, st: Stats) -> None:
+    """生图模型没法用「发一句话」来探测（会真的扣费出图），改成查 /models 验鉴权与连通性。"""
+    url = m.base_url.rstrip("/") + "/models"
+    headers = {"Authorization": f"Bearer {m.api_key}", **m.headers}
+    started = time.monotonic()
+    try:
+        resp = await client.get(url, headers=headers, timeout=PROBE_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001
+        latency = int((time.monotonic() - started) * 1000)
+        _fail(m, st, state=COOLING, error=f"{type(exc).__name__}: {exc}"[:200],
+              cooldown=COOLDOWN_SECONDS, latency_ms=latency)
+        return
+
+    latency = int((time.monotonic() - started) * 1000)
+    _capture_quota(st, resp.headers)
+
+    if resp.status_code == 200:
+        _ok(m, st, latency_ms=latency, http=200, chars=0, finish="probe")
+        return
+    if resp.status_code in (401, 403):
+        body = " ".join(resp.text.split())[:140]
+        _fail(m, st, state=DEAD, error=f"HTTP {resp.status_code} 鉴权失败 {body}",
+              cooldown=BAD_KEY_COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+        return
+    if resp.status_code in (404, 405, 501):
+        # 该服务不提供 /models，只能证明域名可达，不能证明 key 有效
+        _ok(m, st, latency_ms=latency, http=resp.status_code, chars=0, finish="probe")
+        st.last_error = "该服务不提供 /models，仅验证了可达性（真实效果需实际出图）"
+        return
+    body = " ".join(resp.text.split())[:140]
+    _fail(m, st, state=COOLING, error=f"HTTP {resp.status_code} {body}",
+          cooldown=COOLDOWN_SECONDS, http=resp.status_code, latency_ms=latency)
+
+
 async def _probe_one(client: httpx.AsyncClient, m: Model) -> None:
     st = stats_of(m)
     if not m.configured:
         st.state = UNCONFIGURED
         st.last_checked = time.time()
+        return
+
+    if m.is_image:
+        await _probe_image(client, m, st)
         return
 
     payload = {"model": m.model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 4}
@@ -649,6 +886,8 @@ def snapshot() -> dict:
         rows.append({
             "priority": order,
             "kind": m.id,
+            "type": m.type,
+            "api": m.api,
             "key_id": m.key,
             "id": m.id,
             "name": m.name,

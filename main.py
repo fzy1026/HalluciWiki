@@ -17,10 +17,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
-from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES, AIHUBMIX_API_KEY, SHARE_TTL_SECONDS
+from config import CACHE_TTL_SECONDS, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, RANDOM_ENTRIES, SHARE_TTL_SECONDS
 from prompts import GENERATE_PROMPT, SEARCH_PROMPT, SUMMARY_PROMPT
 from html_validator import validate_html
-from image_generator import generate_image
 import providers
 import monitor_page
 import caches
@@ -336,17 +335,21 @@ async def process_image_placeholders(html: str) -> str:
         if not filepath.exists():
             pending.append((match, description, fname, filepath))
 
-    # 第二阶段：并行生成所有未命中的图片
+    # 第二阶段：并行生成所有未命中的图片（走「插图 D」的模型池）
     if pending:
         logger.info("开始并行生成 %d 张插图", len(pending))
         results = await asyncio.gather(
-            *(generate_image(async_client, desc) for _, desc, _, _ in pending),
+            *(providers.generate_image(async_client, desc) for _, desc, _, _ in pending),
             return_exceptions=True,
         )
-        for (_, desc, fname, filepath), image_bytes in zip(pending, results):
-            if isinstance(image_bytes, Exception):
-                logger.warning("插图生成失败 | 描述: %s | 错误: %s", desc[:80], image_bytes)
-            elif image_bytes is None:
+        for (_, desc, fname, filepath), result in zip(pending, results):
+            if isinstance(result, Exception):
+                logger.warning("插图生成失败 | 描述: %s | 错误: %s", desc[:80], result)
+                image_bytes = None
+            else:
+                image_bytes, model = result
+                logger.info("插图由 %s 生成 | %d KB", model.key, len(image_bytes) // 1024)
+            if image_bytes is None:
                 logger.warning("插图生成失败，将显示占位提示 | 描述: %s", desc[:80])
             else:
                 try:
@@ -449,7 +452,7 @@ async def generate_and_review(title: str, enable_images: bool = False, job_id: s
 
     image_instruction = (
         "- 在适当位置插入插图占位符，格式为 [IMAGE: 图片描述]。例如 [IMAGE: 一幅展示量子纠缠原理的示意图，包含两个纠缠粒子之间的连接线]。每个条目建议插入 1-2 个插图占位符，描述应具体、可视化，便于生成准确的图片。占位符应放在相关段落之后，独立成行。"
-        if enable_images else ""
+        if enable_images and providers.has_image_model() else ""
     )
     prompt_gen = GENERATE_PROMPT.format(title=title, summary=summary_text, image_instruction=image_instruction)
     raw_fragment = await call_llm(prompt_gen, purpose="wiki", min_chars=MIN_ARTICLE_CHARS)
@@ -473,7 +476,7 @@ async def generate_and_review(title: str, enable_images: bool = False, job_id: s
         update_job(job_id, progress=80, stage="格式校验通过", message="HTML 格式校验通过。")
 
     # 处理插图占位符 [IMAGE: ...]（仅在启用插图时）
-    if enable_images and AIHUBMIX_API_KEY and IMAGE_PLACEHOLDER.search(raw_fragment):
+    if enable_images and providers.has_image_model() and IMAGE_PLACEHOLDER.search(raw_fragment):
         if job_id:
             update_job(job_id, progress=85, stage="调取插图", message="正在从档案库中调取插图资料。")
         raw_fragment = await process_image_placeholders(raw_fragment)

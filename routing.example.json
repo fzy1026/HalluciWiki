@@ -1,23 +1,18 @@
 {
   "version": 1,
-  "_comment": "任务 → 模型（有序，前者优先）。列表为空 = 该任务不限，按 models.json 顺序使用全部模型。",
+  "_comment": "任务 → 模型（有序，前者优先）。列表为空 = 该任务不限，按 models.json 顺序使用全部同类模型。image 任务只会挑 type=image 的模型，其余任务只挑 type=text 的。可直接编辑，也可在 /admin 页面点击调整。",
   "tasks": {
     "search": {
-      "models": [
-        "local:qwen-local",
-        "deepseek:deepseek-flash"
-      ]
+      "models": []
     },
     "summary": {
-      "models": [
-        "local:qwen-local",
-        "siliconflow:Qwen/Qwen3-8B"
-      ]
+      "models": []
     },
     "page": {
-      "models": [
-        "deepseek:deepseek-flash"
-      ]
+      "models": []
+    },
+    "image": {
+      "models": []
     }
   }
 }

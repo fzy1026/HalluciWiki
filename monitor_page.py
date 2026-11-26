@@ -77,12 +77,14 @@ def _routing_panel(data: dict) -> str:
     tstats = routing.get("stats") or {}
     rows = data.get("rows") or []
     name_of = {r["key_id"]: f'{r["name"]} · {r["model"]}' for r in rows}
+    type_of = {r["key_id"]: r.get("type", "text") for r in rows}
     all_keys = [r["key_id"] for r in rows if r["state"] != "disabled"]
 
     cards = []
-    for task in ("search", "summary", "page"):
+    for task in (list(tasks.keys()) or ["search", "summary", "page", "image"]):
         keys = tasks.get(task) or []
         label = labels.get(task, task)
+        wanted = "image" if task == "image" else "text"
 
         items = []
         if keys:
@@ -97,14 +99,16 @@ def _routing_panel(data: dict) -> str:
                     '</div>'
                 )
         else:
+            hint = ("不限 —— 用全部生图模型（type=image）"
+                    if task == "image" else "不限 —— 按 models.json 顺序使用全部文本模型")
             items.append(
-                '<div style="color:#72777d;font-size:13px;padding:4px 0;line-height:1.6;">'
-                '不限 —— 按 models.json 顺序使用全部模型</div>'
+                f'<div style="color:#72777d;font-size:13px;padding:4px 0;line-height:1.6;">{hint}</div>'
             )
 
         options = "".join(
             f'<option value="{_e(k)}">{_e(name_of.get(k, k))}</option>'
-            for k in all_keys if k not in keys
+            for k in all_keys
+            if k not in keys and type_of.get(k, "text") == wanted
         )
         add_form = (
             '<form method="post" action="/admin/routing" style="display:flex;gap:6px;margin-top:8px;'
@@ -246,7 +250,7 @@ def render(data: dict) -> str:
     <tr style="border-top:1px solid #eaecf0;vertical-align:top;">
       <td style="padding:10px 8px;text-align:center;font-weight:700;color:#54595d;">{r["priority"]}</td>
       <td style="padding:10px 8px;white-space:nowrap;">{_badge(r["state"], r["state_text"])}{note}</td>
-      <td style="padding:10px 8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#54595d;white-space:nowrap;">{_e(r["kind"])}</td>
+      <td style="padding:10px 8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#54595d;white-space:nowrap;">{_e(r["kind"])}{('<span style="margin-left:4px;padding:0 5px;border-radius:3px;background:#eaf3ff;color:#3366cc;font-size:10px;">' + _e(r.get("api") or "image") + '</span>') if r.get("type") == "image" else ""}</td>
       <td style="padding:10px 8px;">
         <div style="font-weight:700;color:#202122;">{_e(r["name"])}</div>
         <div style="font-family:ui-monospace,Consolas,monospace;font-size:12px;color:#3366cc;">{_e(r["model"])}</div>

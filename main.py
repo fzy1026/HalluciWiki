@@ -13,7 +13,7 @@ from html import escape
 
 import httpx
 from fastapi import FastAPI, Query, HTTPException, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
@@ -679,6 +679,18 @@ async def random_page(image: bool = Query(False)):
 @app.get("/health")
 async def health():
     return {"status": "ok", "cache": caches.stats()}
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt():
+    """告诉爬虫别去扫后台和搜索页（/wiki 可以收录，条目本身就是内容）。"""
+    return (
+        "User-agent: *\n"
+        "Disallow: /admin\n"
+        "Disallow: /admin/\n"
+        "Disallow: /search\n"
+        "Disallow: /image/\n"
+        "Allow: /\n"
+    )
 
 # ---------- 登录与鉴权（账号密码在 admin.json，改完保存即生效）----------
 def current_admin(request: Request) -> str:
